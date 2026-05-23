@@ -6,12 +6,12 @@ For power, performance, area (PPA) driven development, code is written in DSLX (
 
 Consider the following python code:
 ```python
-def fun(global_index: int, upper_bin_boundaries: list[int]) -> int:
+def fun(global_index: int, lower_bin_boundaries: list[int]) -> int:
     bin_index: int = 0
-    for threshold in upper_bin_boundaries:
+    for threshold in lower_bin_boundaries[1:]:
         if global_index >= threshold:
             bin_index += 1
-    local_index: int = global_index - upper_bin_boundaries[bin_index]
+    local_index: int = global_index - lower_bin_boundaries[bin_index]
     return bin_index, local_index
 ```
 The objective is to implement this function in hardware and do a detailed PPA analysis. 
@@ -20,10 +20,10 @@ The objective is to implement this function in hardware and do a detailed PPA an
 
 The function is subject to the following constraints:
 
-1. The buswidth `bw_global_index` of `global_index`, and thereby the buswidth of the entries of `upper_bin_boundaries` are buildtime parameters.
-2. The thresholds in `upper_bin_boundaries` are runtime parameters programmable by firmware.
-3. The number of entries `n_boundaries` of `upper_bin_boundaries` is defined at buildtime, and the number of active entries of `upper_bin_boundaries` is defined at runtime, so a sentinel has to be defined that is never surpassed by `global_index` for the inactive entries.
-4. In a refinement, the thresholds in `upper_bin_boundaries` are constrained to be of the form `threshold_i_m << threshold_e`, where the maximum bitwidth `bw_threshold` of `threshold_i_m` is defined at buildtime, and the value of `threshold_i_m` and `threshold_e` are programmable by firmware. The value `threshold_e` is shared by all entries of `upper_bin_boundaries`. This refinement allows to reduce the cost of the comparison, as in each comparison only `bw_threshold` bits need to be compared.
+1. The buswidth `bw_global_index` of `global_index`, and thereby the buswidth of the entries of `lower_bin_boundaries` are buildtime parameters.
+2. The thresholds in `lower_bin_boundaries` are runtime parameters programmable by firmware.
+3. The number of entries `n_boundaries` of `lower_bin_boundaries` is defined at buildtime, and the number of active entries of `lower_bin_boundaries` is defined at runtime, so a sentinel has to be defined that is never surpassed by `global_index` for the inactive entries.
+4. In a refinement, the thresholds in `lower_bin_boundaries` are constrained to be of the form `threshold_i_m << threshold_e`, where the maximum bitwidth `bw_threshold` of `threshold_i_m` is defined at buildtime, and the value of `threshold_i_m` and `threshold_e` are programmable by firmware. The value `threshold_e` is shared by all entries of `lower_bin_boundaries`. This refinement allows to reduce the cost of the comparison, as in each comparison only `bw_threshold` bits need to be compared.
 
 ### Analysis
 

@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-This is a PPA (Power, Performance, Area) study. The hardware-under-study is the binning function described in `README.md`: given a `global_index` and a programmable `upper_bin_boundaries` list, return `(bin_index, local_index)`. The study sweeps three build-time parameters — `bw_global_index`, `n_boundaries`, `bw_threshold` — across three microarchitectures (TDM, pipelined, fully-parallel/thermometer) and compares the resulting PPA numbers from synthesis.
+This is a PPA (Power, Performance, Area) study. The hardware-under-study is the binning function described in `README.md`: given a `global_index` and a programmable `upper_bin_boundaries` list, return `(bin_index, local_index)`. The objective is to characterize how PPA scales with build-time parameters and microarchitecture.
 
-Read `README.md` before adding any implementation; the constraints section there is the source of truth (notably: `upper_bin_boundaries` entries are runtime-programmable, inactive entries use a sentinel, and the refinement constrains thresholds to `mantissa << shared_exponent` form).
+For the **what** and **why** of the study, read `README.md` (problem statement and constraints) and `PLAN.md` (methodology, parameter sweep, architecture strategy, known XLS limits). Update `PLAN.md` as the methodology evolves — don't let CLAUDE.md drift into being a plan.
 
-The repo is at initial-commit stage — there is no source code, no test harness, and no synthesis flow yet. Expect to create that structure as work proceeds.
+The repo is at initial-commit stage — no source, no test harness, no synthesis flow yet. Expect to create that structure as work proceeds.
 
-## Toolchain — must be entered via nix-shell
+## Toolchain — entered via librelane's nix-shell
 
 Librelane, OpenROAD, and Yosys are provided by the librelane nix-shell, not installed in this repo. The expected workflow is:
 
@@ -19,17 +19,25 @@ cd /PATH/TO/YOUR/LIBRELANE && nix-shell
 cd /PATH/TO/THIS_REPOSITORY && claude
 ```
 
-Verify you are inside the shell with `which librelane openroad yosys` — all three should resolve to `/nix/store/...` paths. If they don't, stop and tell the user; do not try to install them.
+Verify with `which librelane openroad yosys` — all three should resolve to `/nix/store/...` paths. If they don't, stop and tell the user; do not try to install them.
 
 ## XLS binaries and docs
 
 Google XLS is split across two locations in this repo, both under `external/` and both gitignored:
 
-- `external/xls-bin/` — statically-compiled binaries used to drive the DSLX → IR → Verilog flow: `interpreter_main`, `ir_converter_main`, `opt_main`, `codegen_main`, `eval_ir_main`, `dslx_fmt`, `proto_to_dslx_main`. Invoke these directly (e.g. `./external/xls-bin/codegen_main --help`); they are not on `$PATH`.
-- `external/xls/` — a clone of the upstream `google/xls` repo, kept **only for documentation and the DSLX language/stdlib reference**. It contains no binaries. Key reading paths: `external/xls/docs_src/dslx_reference.md`, `dslx_std.md`, `codegen_options.md`, `tutorials/`.
+- `external/xls-bin/` — statically-compiled binaries used to drive the DSLX → IR → Verilog flow: `interpreter_main`, `ir_converter_main`, `opt_main`, `codegen_main`, `eval_ir_main`, `dslx_fmt`, `proto_to_dslx_main`. Whether they're on `$PATH` is a downstream decision (e.g. via an install script) — don't assume either way; check with `command -v codegen_main` and fall back to the explicit `./external/xls-bin/...` path if needed.
 
-When unsure about DSLX syntax, semantics, or codegen flags, consult `external/xls/docs_src/` rather than guessing — that mirror is the reason it's checked out locally.
+  **This is a curated subset, not the full XLS tool set.** Upstream `xls/tools/` and `xls/dev_tools/` contain many more binaries (e.g. `simulate_module_main` for RTL simulation, `eval_proc_main` for procs, `benchmark_main` and `pass_metrics_main` for inspecting the scheduler, `delay_info_main`, `check_ir_equivalence_main`, …). If a missing tool would meaningfully help the task, **stop and tell the user** — they maintain `github.com/gbsha/xls-bin` and can publish additional binaries. Do **not** attempt to `bazel build` from source or install XLS from source as a workaround.
+- `external/xls/` — a clone of the upstream `google/xls` repo, kept **only for documentation and the DSLX language/stdlib reference**. It contains no binaries. Key reading paths:
+  - `external/xls/docs_src/dslx_reference.md`, `dslx_std.md`, `dslx_type_system.md` — DSLX language
+  - `external/xls/docs_src/codegen_options.md`, `scheduling.md`, `delay_estimation.md` — codegen & scheduler flags relevant to the PPA sweep
+  - `external/xls/docs_src/tutorials/` — including `intro_to_parametrics.md`, `how_to_use_procs.md`, `what_is_a_proc.md`, `dataflow_and_time.md`
+  - `external/xls/xls/examples/` — runnable DSLX examples (e.g. `constraint.x` for `--io_constraints` usage)
 
-## Expected end-to-end flow
+When unsure about DSLX syntax, codegen flags, or what a particular scheduler knob does, consult `external/xls/` rather than guessing — that's why it's checked out locally.
 
-DSLX source → `ir_converter_main` → unoptimized IR → `opt_main` → optimized IR → `codegen_main` → Verilog → librelane (Yosys synth + OpenROAD PnR) → PPA metrics. The three microarchitectures (TDM, pipelined, parallel) will differ in their DSLX and in the `codegen_main` flags (combinational vs. pipeline generator, pipeline stages, etc.). When adding a new variant, keep build-time parameters (`bw_global_index`, `n_boundaries`, `bw_threshold`) parameterized in DSLX rather than hardcoded, so a single source can drive the sweep.
+### Known toolchain skew: avoid `import std;` for now
+
+The `external/xls-bin/` binaries and the `external/xls/` source clone are from different XLS revisions, and the binary's typechecker rejects the current stdlib's `enumerate` function (`TypeInferenceError: uN[32][0] Zero-sized arrays cannot be indexed`) — meaning **any `import std;` will fail typecheck regardless of whether you actually use the imported items**. Verified 2026-05-23. Workaround: inline the few helpers needed (e.g. supply `BW_BIN` / `clog2(N)` as an explicit parametric at call sites rather than as a default expression). When `xls-bin` is regenerated to match `external/xls` (or vice versa), revisit and restore the stdlib import for cleaner code.
+
+When invoking the binaries directly, pass `--dslx_stdlib_path=external/xls/xls/dslx/stdlib` — the default path the binaries look for doesn't exist here. (Even though we don't `import std;`, some tools still want the path; it's the easier flag to always pass.)

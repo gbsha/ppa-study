@@ -1,2 +1,7 @@
 external
 runs
+
+# librelane writes its run/ artifacts and pulls Verilog into the design dir;
+# only the config.json is canonical and committed under flows/librelane/.
+flows/librelane/*/runs
+flows/librelane/*/binner.v

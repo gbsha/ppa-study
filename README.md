@@ -2,6 +2,39 @@
 
 For power, performance, area (PPA) driven development, code is written in DSLX (part of google's XLS SDK, see below), compiled to verilog, synthesized by librelane, and then PPA metrics are collected.
 
+## Where to start
+
+To reproduce the current baseline (DSLX reference, multi-architecture codegen, and one librelane sky130 PnR run with PPA metrics), follow [HOWTO.md](./HOWTO.md). Every tool invocation and config file is documented there.
+
+`CLAUDE.md` is operational guidance for Claude Code sessions in this repo. `PLAN.md` is the study plan (parameter sweep, architecture strategy, milestones, gates).
+
+## Known toolchain caveats
+
+Two issues with the bundled XLS binaries (`external/xls-bin/`) that you will hit immediately if you don't know about them. Both are real and impact every workflow in this repo until the maintainer addresses them.
+
+### 1. `xls-bin` and `external/xls/` are version-skewed — `import std;` is broken
+
+The statically-compiled binaries in `external/xls-bin/` (currently from `gbsha/xls-bin` release `v1.0-xls-oracle8`) and the upstream source clone in `external/xls/` (currently at commit `45e1f8884`) are not from the same XLS revision. The binary's type checker rejects the source clone's stdlib (`xls/dslx/stdlib/std.x`) with `TypeInferenceError: uN[32][0] Zero-sized arrays cannot be indexed` in the `enumerate` function — meaning **any `import std;` will fail typechecking, regardless of whether you actually use anything from the imported module.**
+
+Workaround until the two are pinned to a matching revision: don't import std. Where you'd use a stdlib helper (e.g. `std::clog2(N)` to derive a bit-width), supply the value as an explicit parametric at the call site instead. See `dslx/binner.x` for an example (`BW_BIN` is an explicit parametric where it would naturally default to `std::clog2(N_BOUNDS)`).
+
+Suggested fix on the maintainer side: tag each `xls-bin` release with the exact XLS commit it was built from, and pin `external/xls/` to that commit (e.g. as a git submodule). Then the binary and the source/stdlib it parses are guaranteed compatible.
+
+### 2. `xls-bin` is a curated subset of the XLS toolchain — several useful binaries are missing
+
+`external/xls-bin/` currently ships `interpreter_main`, `ir_converter_main`, `opt_main`, `codegen_main`, `eval_ir_main`, `dslx_fmt`, `proto_to_dslx_main`. The upstream `xls/tools/` and `xls/dev_tools/` trees contain many more. The ones most likely to come up in this project:
+
+| missing binary           | what it does                                        | when we'll need it       |
+|--------------------------|-----------------------------------------------------|--------------------------|
+| `simulate_module_main`   | RTL-level functional verification of generated Verilog | **M4** — verifying Verilog matches DSLX semantics |
+| `eval_proc_main`         | Execute/test XLS procs                               | **M7** — TDM (proc-based) architecture variant |
+| `benchmark_main`         | Inspect scheduling under a delay model               | M8 — characterising scheduler behaviour over sweeps |
+| `pass_metrics_main`      | Visualise scheduler/codegen pass metrics             | M8 — debugging the sweep |
+| `delay_info_main`        | Per-node delay info                                  | situational              |
+| `check_ir_equivalence_main` | IR-transform regression checking                  | situational              |
+
+If you hit a tool not in `external/xls-bin/`, flag it to the maintainer (the user maintains `github.com/gbsha/xls-bin` and can publish additional binaries on request) — **do not try to build XLS from source as a workaround.**
+
 ## Study objective
 
 Consider the following python code:

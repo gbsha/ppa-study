@@ -1,0 +1,6 @@
+{
+  "DESIGN_NAME": "binner_top",
+  "VERILOG_FILES": ["dir::binner.v"],
+  "CLOCK_PORT": "clk",
+  "CLOCK_PERIOD": 10.0
+}

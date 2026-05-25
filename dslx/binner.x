@@ -8,11 +8,11 @@
 //     strictly greater than any global_index the firmware will ever issue,
 //     so the comparison never increments bin_index for them.
 //
-// BW_BIN must be supplied explicitly by the caller (e.g. ceil(log2(N_BOUNDS)));
-// we'd prefer a parametric default of `std::clog2(N_BOUNDS)`, but the bundled
-// xls-bin binary's typechecker currently rejects the stdlib import (see
-// PLAN.md). Revisit once that's resolved.
-pub fn binner<BW_GLOBAL: u32, N_BOUNDS: u32, BW_BIN: u32>(
+// BW_BIN defaults to ceil(log2(N_BOUNDS)) via std::clog2; callers may override
+// it (the tests below pass it explicitly to pin the bin-index width).
+import std;
+
+pub fn binner<BW_GLOBAL: u32, N_BOUNDS: u32, BW_BIN: u32 = {std::clog2(N_BOUNDS)}>(
     global_index: uN[BW_GLOBAL],
     lower_bin_boundaries: uN[BW_GLOBAL][N_BOUNDS],
 ) -> (uN[BW_BIN], uN[BW_GLOBAL]) {

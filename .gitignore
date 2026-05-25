@@ -6,3 +6,10 @@ runs
 flows/librelane/*/runs
 flows/librelane/*/binner.v
 *.pdf
+
+# Pareto plots are regenerable from the runs/ data via plot_pareto.py;
+# only the CSV table is canonical and committed.
+results/*.png
+
+# Python bytecode cache
+__pycache__/

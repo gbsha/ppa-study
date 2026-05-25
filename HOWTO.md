@@ -4,7 +4,7 @@ format: pdf
 
 # HOWTO: reproduce the M1–M3 baseline
 
-This walks through every command needed to take this repo from a clean clone to the **M3 baseline PPA numbers** on sky130 — DSLX reference function, multi-architecture codegen from one source, and one librelane Classic-flow run with extracted PPA metrics. Each tool call is shown with its full CLI; each config file is shown with its full content.
+This walks through every command needed to take this repo from a clean clone to the **M3 baseline PPA numbers** on sky130 — DSLX reference function, multi-architecture codegen from one source, and one librelane Classic-flow run with extracted PPA metrics. Each tool call is shown with its full CLI; each config file is shown with its full content. Sections 1–3 are the hand-walked flow; **section 4** shows the scripts that automate it into a parameter sweep and the first Pareto frontier (M6, M8).
 
 Read `PLAN.md` for the *why* (study methodology, milestone gates). This file is the *how*.
 
@@ -295,38 +295,83 @@ Achieved: full DSLX → IR → V2005 Verilog → librelane Classic → sky130 Pn
 1. "Parallel architecture" for PPA must mean `--generator=pipeline --pipeline_stages=1` (one stage of logic between registered I/O), not `--generator=combinational`.
 2. `--use_system_verilog=false` is mandatory for the Yosys path.
 
-## 4 — Cleanup
+## 4 — Sweep and Pareto frontier (M6, M8)
+
+Sections 1–3 walk the flow by hand for one point. `flows/run_point.sh` automates exactly that chain (generated DSLX top → `ir_converter` → `opt` → `codegen` → librelane → `extract_metrics`) for any `(arch, bw_global, n_bounds)`; `flows/run_sweep.sh` runs a grid of points in parallel; and `flows/plot_pareto.py` turns the results into a CSV table and Pareto plots.
+
+### 4a — One point via the script
+
+```bash
+# Reproduces the section-3 baseline, into runs/sky130/parallel/bw8_nb4/.
+flows/run_point.sh --bw-global 8 --n-bounds 4
+```
+
+Each point writes only to `runs/<delay_model>/<arch>/bw<BW>_nb<NB>/` and skips if its result already exists (`--force` rebuilds, `--skip-pnr` does the fast XLS-only half). `--arch pipeline --stages N` selects a deeper pipeline; the codegen clock is auto-probed by default. See `flows/run_point.sh --help`.
+
+### 4b — The grid
+
+```bash
+flows/run_sweep.sh --dry-run                    # print the grid, run nothing
+flows/run_sweep.sh                              # default: {parallel,pipe_s2,pipe_s4} × nb {2,4,8}, bw 8
+flows/run_sweep.sh --jobs 4 --librelane-jobs 4  # OUTER points × INNER librelane threads (≈ nproc)
+```
+
+It dispatches points through GNU parallel when present (else a dependency-free bash job pool), logs each point under `runs/_sweeps/<timestamp>/`, and prints an OK/FAIL summary. Re-run to resume — finished points are skipped. librelane is ~5 min/point; at 4×4 the default 9-point grid is a handful of minutes on a 16-core box.
+
+### 4c — Aggregate and plot the frontier
+
+Only plotting needs matplotlib; aggregation, the CSV, and the Pareto math are stdlib. Create the env once (miniforge `mamba`, or `conda`):
+
+```bash
+mamba env create -f environment.yml             # or: conda env create -f environment.yml
+mamba run -n ppa-study flows/plot_pareto.py      # or: conda activate ppa-study && flows/plot_pareto.py
+```
+
+`plot_pareto.py` walks `runs/` and writes:
+
+- `results/ppa_sweep.csv` — the flat table (committed; one row per point, provenance + area/power/timing).
+- `results/pareto_area_vs_clock.png`, `…_area_vs_power.png`, `…_flops_vs_clock.png` — frontier plots (gitignored).
+
+To **regenerate the plots** (and refresh the CSV) at any time, just re-run that `plot_pareto.py` line — it re-reads whatever is currently under `runs/`. The CSV and printed table need no env: `flows/plot_pareto.py --no-plot` runs from the bare nix-shell; only the PNGs require the `ppa-study` env.
+
+## 5 — Cleanup
 
 To wipe everything regenerable (gitignored only):
 
 ```bash
-rm -rf runs/ flows/librelane/binner_8x4/runs/ flows/librelane/binner_8x4/binner.v
+rm -rf runs/ flows/librelane/binner_8x4/runs/ flows/librelane/binner_8x4/binner.v results/*.png
 ```
 
-To re-run from scratch, repeat sections 1–3.
+To re-run from scratch, repeat sections 1–3 (hand-walked) or section 4 (scripted).
 
-## 5 — Where everything lives
+## 6 — Where everything lives
 
 Committed:
 
 ```
 HOWTO.md                                 this file
-README.md                                project intro + toolchain caveats
+README.md                                project intro + toolchain status
 CLAUDE.md                                operational guidance for Claude Code
 PLAN.md                                  study plan: parameters, architectures, milestones, gates
 dslx/binner.x                            parametric DSLX function + tests
 dslx/binner_top_8x4.x                    concrete top instantiation for BW=8, N=4
-flows/librelane/binner_8x4/config.json   librelane Classic flow config for this design point
-flows/extract_metrics.py                 PPA summary extractor
+flows/librelane/binner_8x4/config.json   librelane Classic flow config (hand-walked baseline)
+flows/extract_metrics.py                 PPA summary extractor (stdlib-only)
+flows/run_point.sh                       one design point, end to end (M6)
+flows/run_sweep.sh                       grid of points in parallel (M6)
+flows/plot_pareto.py                     sweep aggregation + Pareto plots (M8)
+environment.yml                          matplotlib-only conda env for plotting
+results/ppa_sweep.csv                    aggregated PPA table (first frontier)
 ```
 
 Gitignored (regenerated by following this HOWTO):
 
 ```
-runs/sky130/binner_8x4.ir                XLS IR (step 2a)
-runs/sky130/binner_8x4.opt.ir            optimised XLS IR (step 2b)
+runs/sky130/binner_8x4*.ir               XLS IR from the hand-walked sections 2a/2b
 runs/sky130/{comb,pipe_s4_2000ps,pipe_s4_500ps,pipe_s1_2000ps}/bw8_nb4/
-                                         per-codegen-variant Verilog + metrics
-flows/librelane/binner_8x4/binner.v      copy of pipe_s1_2000ps Verilog (step 3b)
-flows/librelane/binner_8x4/runs/         librelane run artifacts and metrics
+                                         per-codegen-variant Verilog + metrics (sections 2c–3a)
+flows/librelane/binner_8x4/{binner.v,runs/}   hand-walked librelane input + artifacts (section 3)
+runs/<model>/<arch>/bw<BW>_nb<NB>/        scripted points: top.x, IR, Verilog, metrics.json, point.json
+runs/_sweeps/<timestamp>/                 run_sweep.sh dispatch logs + joblog
+results/*.png                            Pareto plots (regenerate via plot_pareto.py)
 ```

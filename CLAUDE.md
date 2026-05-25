@@ -12,7 +12,11 @@ This is a PPA (Power, Performance, Area) study. The hardware-under-study is the 
 
 For the **what** and **why** of the study, read `README.md` (problem statement and constraints) and `PLAN.md` (methodology, parameter sweep, architecture strategy, known XLS limits). Update `PLAN.md` as the methodology evolves — don't let CLAUDE.md drift into being a plan.
 
-The repo is at initial-commit stage — no source, no test harness, no synthesis flow yet. Expect to create that structure as work proceeds.
+The M1–M3 vertical slice is in place: `dslx/binner.x` (parametric reference + tests), `dslx/binner_top_8x4.x` (concrete top), `flows/librelane/binner_8x4/config.json` (librelane config), and `flows/extract_metrics.py` (PPA extractor). `HOWTO.md` reproduces the sky130 baseline end-to-end. The active work (per `PLAN.md`) is the sweep runner and first Pareto-frontier plot; the refined/TDM architectures and asap7 come later.
+
+## Commit messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<optional scope>): <summary>`. Types in use here: `feat`, `fix`, `docs`, `refactor`, `chore`; scope is the top-level area when useful (e.g. `dslx`, `flows`). Keep the summary imperative and lower-case — e.g. `refactor(dslx): default BW_BIN to std::clog2(N_BOUNDS)`.
 
 ## Toolchain — entered via librelane's nix-shell
 
@@ -29,9 +33,9 @@ Verify with `which librelane openroad yosys` — all three should resolve to `/n
 
 Google XLS is split across two locations in this repo, both under `external/` and both gitignored:
 
-- `external/xls-bin/` — statically-compiled binaries used to drive the DSLX → IR → Verilog flow: `interpreter_main`, `ir_converter_main`, `opt_main`, `codegen_main`, `eval_ir_main`, `dslx_fmt`, `proto_to_dslx_main`. Whether they're on `$PATH` is a downstream decision (e.g. via an install script) — don't assume either way; check with `command -v codegen_main` and fall back to the explicit `./external/xls-bin/...` path if needed.
+- `external/xls-bin/` — statically-compiled binaries driving the DSLX → IR → Verilog flow. The set is now nearly complete (17 tools): `interpreter_main`, `ir_converter_main`, `opt_main`, `codegen_main`, `eval_ir_main`, `delay_info_main`, `lec_main` (formal logic-equivalence), `prove_quickcheck_main`, `aot_compiler_main`, `dslx_fmt`, `dslx_ls`, `parse_and_typecheck_dslx_main`, `proto_to_dslx_main`, `type_layout_main`, `jit_wrapper_generator_main`, `print_bom`, `gather_design_stats`. Whether they're on `$PATH` is a downstream decision — don't assume either way; check with `command -v codegen_main` and fall back to the explicit `./external/xls-bin/...` path if needed (currently they are *not* on `$PATH`).
 
-  **This is a curated subset, not the full XLS tool set.** Upstream `xls/tools/` and `xls/dev_tools/` contain many more binaries (e.g. `simulate_module_main` for RTL simulation, `eval_proc_main` for procs, `benchmark_main` and `pass_metrics_main` for inspecting the scheduler, `delay_info_main`, `check_ir_equivalence_main`, …). If a missing tool would meaningfully help the task, **stop and tell the user** — they maintain `github.com/gbsha/xls-bin` and can publish additional binaries. Do **not** attempt to `bazel build` from source or install XLS from source as a workaround.
+  **`xls-bin` and `external/xls/` are pinned to the same XLS revision** (tag `v0.0.0-10042-g81ff4fdf7`, commit `81ff4fdf7`), so the binaries and the stdlib they parse are compatible — `import std;` works (see below). A few upstream binaries are still absent. The one that affects this study is **`simulate_module_main`** (RTL functional sim): it can't be linked statically, won't be shipped, and is replaced by an external simulator (cocotb + iverilog/verilator) — don't wait on it. Also absent: `eval_proc_main` (gates M7 proc verification), `benchmark_main`, `pass_metrics_main` (scheduler inspection, nice-to-have). If a still-missing tool would meaningfully help, **stop and tell the user** — they maintain `github.com/gbsha/xls-bin` and can publish more. Do **not** `bazel build` or install XLS from source as a workaround.
 - `external/xls/` — a clone of the upstream `google/xls` repo, kept **only for documentation and the DSLX language/stdlib reference**. It contains no binaries. Key reading paths:
   - `external/xls/docs_src/dslx_reference.md`, `dslx_std.md`, `dslx_type_system.md` — DSLX language
   - `external/xls/docs_src/codegen_options.md`, `scheduling.md`, `delay_estimation.md` — codegen & scheduler flags relevant to the PPA sweep
@@ -40,8 +44,8 @@ Google XLS is split across two locations in this repo, both under `external/` an
 
 When unsure about DSLX syntax, codegen flags, or what a particular scheduler knob does, consult `external/xls/` rather than guessing — that's why it's checked out locally.
 
-### Known toolchain skew: avoid `import std;` for now
+### `import std;` works; always pass `--dslx_stdlib_path`
 
-The `external/xls-bin/` binaries and the `external/xls/` source clone are from different XLS revisions, and the binary's typechecker rejects the current stdlib's `enumerate` function (`TypeInferenceError: uN[32][0] Zero-sized arrays cannot be indexed`) — meaning **any `import std;` will fail typecheck regardless of whether you actually use the imported items**. Verified 2026-05-23. Workaround: inline the few helpers needed (e.g. supply `BW_BIN` / `clog2(N)` as an explicit parametric at call sites rather than as a default expression). When `xls-bin` is regenerated to match `external/xls` (or vice versa), revisit and restore the stdlib import for cleaner code.
+Since `xls-bin` and `external/xls` are now on the same revision, `import std;` typechecks and runs cleanly (verified 2026-05-25). `dslx/binner.x` relies on this — `BW_BIN` defaults to `std::clog2(N_BOUNDS)`. The earlier skew that broke every stdlib import (`TypeInferenceError: ... Zero-sized arrays cannot be indexed` in `enumerate`) is resolved; no inline-helper workaround is needed.
 
-When invoking the binaries directly, pass `--dslx_stdlib_path=external/xls/xls/dslx/stdlib` — the default path the binaries look for doesn't exist here. (Even though we don't `import std;`, some tools still want the path; it's the easier flag to always pass.)
+When invoking the binaries directly, pass `--dslx_stdlib_path=external/xls/xls/dslx/stdlib` — the default path the binaries look for doesn't exist here, and `import std;` now needs it to resolve.

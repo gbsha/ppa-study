@@ -20,26 +20,28 @@ ls external/xls-bin/codegen_main
 
 Expected: the first three resolve to `/nix/store/...` paths; the fourth is an executable. If any of these fail, fix that before continuing.
 
-**Two known toolchain caveats** that you'll hit otherwise (see README "Known toolchain caveats" for detail): `import std;` in DSLX is broken because of an `xls-bin`/`external/xls` version skew, and the `xls-bin` binary set is a curated subset (no `simulate_module_main`, `eval_proc_main`, etc.). The flow below avoids both issues.
+**Toolchain note** (see README "Toolchain status" for detail): `xls-bin` and `external/xls` are pinned to the same XLS revision, so `import std;` works and `dslx/binner.x` uses `std::clog2` directly — pass `--dslx_stdlib_path=external/xls/xls/dslx/stdlib` on every invocation so the import resolves. The binary set is nearly complete; the one gap relevant here is `simulate_module_main` (RTL sim), which is replaced by an external simulator (cocotb + iverilog/verilator) and isn't needed for this M1–M3 baseline.
 
 ## 1 — M1: DSLX reference function (interpret + JIT cross-check)
 
 **Source.** Two `.x` files in `dslx/`:
 
-- `dslx/binner.x` — parametric `binner<BW_GLOBAL, N_BOUNDS, BW_BIN>` matching the Python in README.md, with six `#[test]` cases (basic 8-bit/4-bin, sentinel-for-inactive-entries, only-bin-0-active, non-zero `lbb[0]`, 2-bin minimal, 16-bit wider case).
-- `dslx/binner_top_8x4.x` — concrete top-level instantiation for `BW_GLOBAL=8, N_BOUNDS=4, BW_BIN=2`, required because parametric functions can't be top-level for IR conversion.
+- `dslx/binner.x` — parametric `binner<BW_GLOBAL, N_BOUNDS, BW_BIN = {std::clog2(N_BOUNDS)}>` matching the Python in README.md, with six `#[test]` cases (basic 8-bit/4-bin, sentinel-for-inactive-entries, only-bin-0-active, non-zero `lbb[0]`, 2-bin minimal, 16-bit wider case). The tests pass `BW_BIN` explicitly to pin the bin-index width.
+- `dslx/binner_top_8x4.x` — concrete top-level instantiation for `BW_GLOBAL=8, N_BOUNDS=4` (`BW_BIN` defaults to `clog2(4)=2`), required because parametric functions can't be top-level for IR conversion.
 
-`BW_BIN` is supplied explicitly rather than defaulting to `std::clog2(N_BOUNDS)` because `import std;` is broken (the version skew). When that's fixed, restore the default.
+`BW_BIN` defaults to `std::clog2(N_BOUNDS)` now that `import std;` works (the `xls`/`xls-bin` revisions are in sync).
 
 **Gate.** Run all DSLX tests and cross-check the DSLX interpreter against the IR JIT. The `--compare=jit` flag re-evaluates each test through the IR jitter and asserts equivalence — this is the strongest XLS-internal verification we have without `simulate_module_main`.
 
 ```bash
-./external/xls-bin/interpreter_main --compare=jit dslx/binner.x
+./external/xls-bin/interpreter_main \
+    --dslx_stdlib_path=external/xls/xls/dslx/stdlib \
+    --compare=jit dslx/binner.x
 ```
 
 **Expected:** all 6 tests print `[ OK ]`; final line `[===============] 6 test(s) ran; 0 failed; 0 skipped.`; exit code 0.
 
-If you see an `ImportError` about `xls/dslx/stdlib/std.x` being missing, add `--dslx_stdlib_path=external/xls/xls/dslx/stdlib` — but it shouldn't be needed since `binner.x` doesn't import std.
+The `--dslx_stdlib_path` flag is required: `binner.x` does `import std;` (for `std::clog2`), and the default stdlib path the binaries look for doesn't exist in this layout. Omitting it fails with `ImportError: Could not find DSLX file for import ... xls/dslx/stdlib/std.x`.
 
 ## 2 — M2: multi-architecture codegen from one DSLX source
 

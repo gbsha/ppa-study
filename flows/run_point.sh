@@ -18,9 +18,10 @@
 #   --n-bounds N         number of boundary entries (bins)              (required)
 #   --arch parallel|pipeline   architecture family            (default: parallel)
 #   --stages N           pipeline stages; forced to 1 for 'parallel'  (default: 4 for pipeline)
-#   --codegen-clock-ps N|auto  XLS scheduling clock; 'auto' probes the
-#                        minimum feasible clock   (default: parallel=2000, pipeline=auto)
+#   --codegen-clock-ps N|auto  XLS scheduling clock; 'auto' probes the minimum
+#                        feasible clock for the stage count   (default: auto)
 #   --librelane-clock-ns N     PnR (STA) target clock period         (default: 10)
+#   --librelane-jobs N   cap librelane's internal threads (its -j)  (default: librelane's own)
 #   --delay-model NAME   XLS delay model: sky130|asap7|unit          (default: sky130)
 #   --skip-pnr           stop after codegen (cheap XLS-only half; no librelane)
 #   --force              rebuild even if a cached result is present
@@ -37,7 +38,7 @@ XLS_TAG="xls-81ff4fdf7"   # pinned xls / xls-bin revision (provenance only)
 
 # ---- defaults ----------------------------------------------------------------
 BW=""; NB=""; ARCH="parallel"; STAGES=""; CODEGEN_CLK=""
-LL_CLK_NS="10"; DELAY_MODEL="sky130"; SKIP_PNR=0; FORCE=0
+LL_CLK_NS="10"; LL_JOBS=""; DELAY_MODEL="sky130"; SKIP_PNR=0; FORCE=0
 
 usage() { sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//; $d'; }
 
@@ -49,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     --stages)            STAGES="$2"; shift 2 ;;
     --codegen-clock-ps)  CODEGEN_CLK="$2"; shift 2 ;;
     --librelane-clock-ns) LL_CLK_NS="$2"; shift 2 ;;
+    --librelane-jobs)    LL_JOBS="$2"; shift 2 ;;
     --delay-model)       DELAY_MODEL="$2"; shift 2 ;;
     --skip-pnr)          SKIP_PNR=1; shift ;;
     --force)             FORCE=1; shift ;;
@@ -107,12 +109,14 @@ EOF
 "$XLS_BIN/opt_main" "$IR" > "$OPT_IR"
 
 # ---- 3. resolve the codegen (XLS scheduling) clock --------------------------
-# parallel -> a loose fixed clock (one logic stage between registered I/O);
-# pipeline 'auto' -> probe the minimum feasible clock for the requested stages
-# by asking for an impossible 1 ps and parsing the scheduler's suggestion.
-if [[ -z "$CODEGEN_CLK" ]]; then
-  [[ "$ARCH" == "parallel" ]] && CODEGEN_CLK=2000 || CODEGEN_CLK=auto
-fi
+# 'auto' probes the minimum feasible clock for the requested stage count by
+# asking for an impossible 1 ps and parsing the scheduler's suggestion. This is
+# the right default for both families: for parallel (1 stage) the emitted RTL is
+# clock-independent as long as the clock is feasible, and a fixed value doesn't
+# scale (8 comparators in one stage need a looser clock than 4); for pipeline it
+# packs the logic tightly across stages. Override with an explicit value if you
+# want extra slack at codegen time.
+CODEGEN_CLK="${CODEGEN_CLK:-auto}"
 if [[ "$CODEGEN_CLK" == "auto" ]]; then
   probe_err="$("$XLS_BIN/codegen_main" --generator=pipeline --delay_model="$DELAY_MODEL" \
         --clock_period_ps=1 --pipeline_stages="$STAGES" --reset=rst \
@@ -167,8 +171,10 @@ EOF
 # writing final/metrics.json — so don't let set -e abort here; judge success on
 # whether the metrics file was produced. See HOWTO §3c.
 echo "[librelane] running Classic flow (this is the slow step)…"
+LL_ARGS=(--flow classic --condensed --log-level WARNING)
+[[ -n "$LL_JOBS" ]] && LL_ARGS+=(--jobs "$LL_JOBS")
 set +e
-librelane --flow classic --condensed --log-level WARNING "$CONFIG"
+librelane "${LL_ARGS[@]}" "$CONFIG"
 LL_EXIT=$?
 set -e
 

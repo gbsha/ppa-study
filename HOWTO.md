@@ -1,3 +1,7 @@
+---
+format: pdf
+---
+
 # HOWTO: reproduce the M1–M3 baseline
 
 This walks through every command needed to take this repo from a clean clone to the **M3 baseline PPA numbers** on sky130 — DSLX reference function, multi-architecture codegen from one source, and one librelane Classic-flow run with extracted PPA metrics. Each tool call is shown with its full CLI; each config file is shown with its full content.

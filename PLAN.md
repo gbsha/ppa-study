@@ -1,3 +1,7 @@
+---
+format: pdf
+---
+
 # PLAN.md
 
 The PPA study plan: what is being swept, how the architectures are produced, and what limits we've already discovered. Update this file as the methodology evolves; keep `CLAUDE.md` for general repo guidance.

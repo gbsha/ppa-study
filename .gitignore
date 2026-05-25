@@ -5,3 +5,4 @@ runs
 # only the config.json is canonical and committed under flows/librelane/.
 flows/librelane/*/runs
 flows/librelane/*/binner.v
+*.pdf

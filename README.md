@@ -1,3 +1,7 @@
+---
+format: pdf
+---
+
 # Readme
 
 For power, performance, area (PPA) driven development, code is written in DSLX (part of google's XLS SDK, see below), compiled to verilog, synthesized by librelane, and then PPA metrics are collected.

@@ -1,0 +1,17 @@
+# Python environment for the M8 sweep analysis / plotting (PLAN.md M8).
+#
+# Only the plotting in flows/plot_pareto.py needs this; the aggregation, CSV
+# export, and Pareto computation in that script are stdlib-only and also run
+# under the bare librelane nix-shell python. flows/extract_metrics.py is
+# likewise stdlib-only by design. So this env is deliberately minimal —
+# matplotlib (which pulls numpy) is the only thing the nix-shell lacks.
+#
+#   conda env create -f environment.yml   # first time
+#   conda activate ppa-study
+#   flows/plot_pareto.py                   # writes results/*.csv and results/*.png
+name: ppa-study
+channels:
+  - conda-forge
+dependencies:
+  - python >=3.11
+  - matplotlib >=3.8

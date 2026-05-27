@@ -6,7 +6,13 @@
 //     to infinity.
 //   - Inactive entries (per the runtime active-count) hold a sentinel value
 //     strictly greater than any global_index the firmware will ever issue,
-//     so the comparison never increments bin_index for them.
+//     so the comparison never increments bin_index for them. The hardware has
+//     no notion of a sentinel — this is just how firmware disables a bin.
+//     Because thresholds are BW_GLOBAL-wide (same width as global_index), the
+//     largest representable value 2**BW_GLOBAL - 1 is reserved as that sentinel,
+//     making it a firmware contract:  0 <= global_index <= 2**BW_GLOBAL - 2.
+//     (To make the sentinel safe across the FULL global_index range instead,
+//     widen thresholds to BW_GLOBAL+1 bits — a deliberate PPA trade, see PLAN.)
 //
 // BW_BIN defaults to ceil(log2(N_BOUNDS)) via std::clog2; callers may override
 // it (the tests below pass it explicitly to pin the bin-index width).

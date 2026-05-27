@@ -39,6 +39,12 @@ The one absence that affects this study is **`simulate_module_main`** — see `P
 Consider the following python code:
 ```python
 def fun(global_index: int, lower_bin_boundaries: list[int]) -> int:
+    # Contract: inactive entries hold a sentinel that global_index never reaches.
+    # In a BW_GLOBAL-wide hardware realization the thresholds are the same width
+    # as global_index, so the top value (2**BW_GLOBAL - 1) is reserved as that
+    # sentinel and firmware must keep 0 <= global_index <= 2**BW_GLOBAL - 2.
+    # (Or widen thresholds to BW_GLOBAL+1 bits to make the sentinel safe over the
+    # full global_index range.)
     bin_index: int = 0
     for threshold in lower_bin_boundaries[1:]:
         if global_index >= threshold:

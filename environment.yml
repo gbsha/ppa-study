@@ -1,17 +1,22 @@
-# Python environment for the M8 sweep analysis / plotting (PLAN.md M8).
+# Python environment for the sweep analysis / visualization (PLAN.md M8).
 #
-# Only the plotting in flows/plot_pareto.py needs this; the aggregation, CSV
-# export, and Pareto computation in that script are stdlib-only and also run
-# under the bare librelane nix-shell python. flows/extract_metrics.py is
-# likewise stdlib-only by design. So this env is deliberately minimal —
-# matplotlib (which pulls numpy) is the only thing the nix-shell lacks.
+# Deliberately minimal — most of the flow runs under the bare librelane
+# nix-shell python. Two tools need something the nix-shell lacks:
+#   - flows/plot_pareto.py — its plotting needs matplotlib (which pulls numpy);
+#     the aggregation, CSV export, and Pareto math are stdlib and run anywhere.
+#   - flows/ir_to_dot.py — parses XLS IR into Graphviz DOT (stdlib) and shells
+#     out to `dot` to render. The `graphviz` package below provides that binary,
+#     so rendering doesn't depend on a system graphviz install.
+# flows/extract_metrics.py is stdlib-only by design.
 #
-#   conda env create -f environment.yml   # first time
-#   conda activate ppa-study
-#   flows/plot_pareto.py                   # writes results/*.csv and results/*.png
+#   mamba env create -f environment.yml      # first time (or: conda env create)
+#   mamba env update -f environment.yml      # apply changes to an existing env
+#   mamba run -n ppa-study flows/plot_pareto.py
+#   mamba run -n ppa-study flows/ir_to_dot.py runs/sky130/binner_8x4.opt.ir
 name: ppa-study
 channels:
   - conda-forge
 dependencies:
   - python >=3.11
   - matplotlib >=3.8
+  - graphviz >=9

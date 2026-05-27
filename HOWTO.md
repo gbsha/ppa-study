@@ -167,6 +167,27 @@ mkdir -p runs/sky130/pipe_s4_500ps/bw8_nb4
 
 The gate passes: same IR, three architecturally distinct Verilogs by toggling codegen constraints alone. **Key methodology takeaway:** `--pipeline_stages` alone produces buffer stages if the clock is loose. To get a real distributed pipeline, drive `--clock_period_ps` near the minimum feasible for the chosen stage count.
 
+### 2g — Inspect the computation graph (optional)
+
+The optimized IR *is* the dataflow graph — every node lists its operands — so it answers structural questions directly: how many comparators, what collects their results, which nets fan out widely. XLS ships no graph exporter in the `xls-bin/bin/` release (the IR visualizers under `external/xls/xls/visualization/` are source-only and would need a Bazel build), so `flows/ir_to_dot.py` parses the IR into Graphviz and renders it.
+
+Parsing and DOT emission are stdlib, so the DOT text needs no environment:
+
+```bash
+flows/ir_to_dot.py runs/sky130/binner_8x4.opt.ir --format dot -o /tmp/binner.dot
+```
+
+Rendering to SVG/PNG shells out to `dot`, which the `ppa-study` conda env provides (`graphviz` is in `environment.yml` — see §4c for the env):
+
+```bash
+mamba run -n ppa-study flows/ir_to_dot.py runs/sky130/binner_8x4.opt.ir
+# -> runs/sky130/binner_8x4.opt.svg  (output defaults to the input path with the format extension)
+```
+
+Nodes are coloured by operation class (comparator / mux / arithmetic / array read / bit-op / literal / input / output) and edges run operand → consumer (`--rankdir TB` puts inputs at the top). For the `bw8_nb4` parallel point you see `global_index` fanning out to three `uge` comparators in parallel, a `sel`/`concat`/`add` cluster collapsing the thermometer bits into `bin_index` (a popcount), then the `lbb[bin_index]` lookup and the `sub` producing `local_index`. The script also prints a **fanout report**: here `global_index` and `lower_bin_boundaries` each have out-degree 4 — the high-fanout broadcast nets behind the M3 max-slew finding.
+
+It renders the `top` function by default. For the *pre-optimisation* IR (where the loop is still a `counted_for` in a separate function) pass `--fn __binner__binner__2_8_4` to see that form. See `flows/ir_to_dot.py --help`.
+
 ## 3 — M3: one Verilog through librelane sky130 PnR
 
 M2 generated Verilog optimised for *inspection*. None of those three variants drops directly into librelane Classic flow:
@@ -362,7 +383,8 @@ flows/extract_metrics.py                 PPA summary extractor (stdlib-only)
 flows/run_point.sh                       one design point, end to end (M6)
 flows/run_sweep.sh                       grid of points in parallel (M6)
 flows/plot_pareto.py                     sweep aggregation + Pareto plots (M8)
-environment.yml                          matplotlib-only conda env for plotting
+flows/ir_to_dot.py                       XLS IR -> Graphviz computation graph + fanout report
+environment.yml                          minimal conda env (matplotlib for plots, graphviz for ir_to_dot)
 results/ppa_sweep.csv                    aggregated PPA table (first frontier)
 ```
 

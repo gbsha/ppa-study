@@ -155,7 +155,16 @@ mkdir -p runs/sky130/pipe_s4_500ps/bw8_nb4
     runs/sky130/binner_8x4.opt.ir
 ```
 
-**Expected:** `flop_count: 154`, `max_reg_to_reg_delay_ps: 509`. Now run the same `awk` inspection on this schedule — you'll see comparators distributed across stages 0–3 instead of crammed into stage 0.
+**Expected:** `flop_count: 154`, `max_reg_to_reg_delay_ps: 509`. Run the same `awk` inspection on this schedule and you get (grouped by stage):
+
+```
+Stage 0:  global_index, lower_bin_boundaries, array_index.79/80, uge.81, uge.86, sel.88
+Stage 1:  array_index.89, uge.91, concat.119/120, sel.90, bin_index (add)
+Stage 2:  array_index.94            <- lbb[bin_index] lookup
+Stage 3:  local_index (sub), tuple.96
+```
+
+Note what is *not* happening: the comparators do **not** spread evenly across all four stages. They cluster at the front (`uge.81`/`uge.86` in stage 0, `uge.91` in stage 1 — deferred there to save a pipeline register, not for timing). What the extra stages actually pipeline is the **serial chain after** the compares: the popcount collector finishes in stage 1, the data-dependent `lbb[bin_index]` lookup takes all of stage 2, and the subtraction takes all of stage 3 — those last two are single operations that each nearly fill a 509 ps stage. §2h shows why, from the per-node delay model.
 
 ### 2f — M2 gate summary
 
@@ -163,7 +172,7 @@ mkdir -p runs/sky130/pipe_s4_500ps/bw8_nb4
 |--------------------|-------|------------|-----------------------------------------------------|
 | combinational (2c) | 0     | feedthrough| all logic in one combinational cone                 |
 | pipe @ 2000 ps (2d)| 80    | 1809 ps    | stage 0 has all logic; stages 1–3 are buffers       |
-| pipe @ 509 ps (2e) | 154   | 509 ps     | comparators actually distributed across all 4 stages |
+| pipe @ 509 ps (2e) | 154   | 509 ps     | compares cluster in stages 0–1; lookup and subtract each own a late stage |
 
 The gate passes: same IR, three architecturally distinct Verilogs by toggling codegen constraints alone. **Key methodology takeaway:** `--pipeline_stages` alone produces buffer stages if the clock is loose. To get a real distributed pipeline, drive `--clock_period_ps` near the minimum feasible for the chosen stage count.
 
@@ -187,6 +196,35 @@ mamba run -n ppa-study flows/ir_to_dot.py runs/sky130/binner_8x4.opt.ir
 Nodes are coloured by operation class (comparator / mux / arithmetic / array read / bit-op / literal / input / output) and edges run operand → consumer (`--rankdir TB` puts inputs at the top). For the `bw8_nb4` parallel point you see `global_index` fanning out to three `uge` comparators in parallel, a `sel`/`concat`/`add` cluster collapsing the thermometer bits into `bin_index` (a popcount), then the `lbb[bin_index]` lookup and the `sub` producing `local_index`. The script also prints a **fanout report**: here `global_index` and `lower_bin_boundaries` each have out-degree 4 — the high-fanout broadcast nets behind the M3 max-slew finding.
 
 It renders the `top` function by default. For the *pre-optimisation* IR (where the loop is still a `counted_for` in a separate function) pass `--fn __binner__binner__2_8_4` to see that form. See `flows/ir_to_dot.py --help`.
+
+### 2h — Where the clock goes (critical path, pre-PnR)
+
+`delay_info_main` reports each node's delay and the critical path under a delay model — XLS's pre-PnR timing estimate, and the cheapest way to see what sets the clock before committing to a librelane run. It prints the critical path *and* every node's delay (long output — pipe it to a pager, or isolate the critical path with `sed`):
+
+```bash
+./external/xls-bin/bin/delay_info_main --delay_model=sky130 \
+    runs/sky130/binner_8x4.opt.ir | sed -n '/# Critical path/,/# Delay of all/p'
+# (drop the sed and pipe to `less` to also see the per-node delay list)
+```
+
+For the `bw8_nb4` binner the critical path is 1809 ps — exactly the §3a single-stage minimum clock — and reads (down the dependency chain):
+
+```
+uge.81             309 ps   <- one comparator (the only compare on the path)
+  -> sel.88       +199 ps   ┐
+  -> sel.90       +199 ps   ├ popcount collector
+  -> bin_index    +170 ps   ┘
+  -> array_index.94 +423 ps <- lbb[bin_index] lookup (a mux on bin_index)
+  -> local_index  +509 ps   <- global_index - lbb[bin_index]
+  = 1809 ps
+```
+
+Two things to read off it:
+
+- **The parallel comparators are not the bottleneck.** In the full per-node list all three `uge` nodes are 309 ps *each* and run in parallel, so the path crosses only one of them (309 ps — 17 % of the total). The other 83 % is the *serial* chain after the compares: collect → look up → subtract. That is why the single-stage clock is long, and why pipelining (§2e) helps by slicing that *depth* — it does nothing to the already-parallel compares.
+- **Pipelining can't beat the slowest single node.** `local_index`'s subtraction is 509 ps on its own, and the 4-stage minimum clock is *exactly* 509 ps: the scheduler cuts *between* nodes, never *through* one. This is the hard floor that the §2e stage map runs into (subtract alone owns stage 3).
+
+This is the timing companion to §2g: the graph shows *what* is computed and how it fans out; this shows *how long* each step takes and what therefore bounds the clock. It also explains the §2e stage assignment — the cheap parallel compares pack into the early stages, while the expensive single nodes (lookup, subtract) each claim a stage of their own.
 
 ## 3 — M3: one Verilog through librelane sky130 PnR
 

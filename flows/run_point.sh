@@ -31,10 +31,10 @@ set -euo pipefail
 # ---- locate repo root so the script works from any cwd -----------------------
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-XLS_BIN="$ROOT/external/xls-bin"
+XLS_BIN="$ROOT/external/xls-bin/bin"
 STDLIB="$ROOT/external/xls/xls/dslx/stdlib"
 DSLX_DIR="$ROOT/dslx"
-XLS_TAG="xls-81ff4fdf7"   # pinned xls / xls-bin revision (provenance only)
+XLS_TAG="xls-81ff4fdf7-xlsbin-1"   # pinned xls commit + xls-bin bundle build (provenance only)
 
 # ---- defaults ----------------------------------------------------------------
 BW=""; NB=""; ARCH="parallel"; STAGES=""; CODEGEN_CLK=""
@@ -61,7 +61,7 @@ done
 
 die() { echo "run_point.sh: $*" >&2; exit 1; }
 [[ -n "$BW" && -n "$NB" ]] || die "--bw-global and --n-bounds are required (see --help)"
-[[ -x "$XLS_BIN/codegen_main" ]] || die "XLS binaries not found in external/xls-bin (see README 'Install Tools')"
+[[ -x "$XLS_BIN/codegen_main" ]] || die "XLS binaries not found in external/xls-bin/bin (see README 'Install Tools')"
 
 # ---- resolve arch -> stages and directory tag --------------------------------
 case "$ARCH" in

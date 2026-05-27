@@ -22,6 +22,8 @@ Expected: the first three resolve to `/nix/store/...` paths; the fourth is an ex
 
 **Toolchain note** (see README "Toolchain status" for detail): `xls-bin` and `external/xls` are pinned to the same XLS revision, so `import std;` works and `dslx/binner.x` uses `std::clog2` directly — pass `--dslx_stdlib_path=external/xls/xls/dslx/stdlib` on every invocation so the import resolves. The binary set is nearly complete; the one gap relevant here is `simulate_module_main` (RTL sim), which is replaced by an external simulator (cocotb + iverilog/verilator) and isn't needed for this M1–M3 baseline.
 
+**Harmless startup message:** the XLS binaries may print `[symbolize_elf.inc : 379] RAW: Unable to get high fd: rc=0, limit=1024` to stderr. This is just Abseil's crash-backtrace symbolizer failing to reserve a high file descriptor under a low open-files limit; it does not affect the result (it goes to stderr, not the `>`-redirected output file). To silence it, raise the limit in your shell first: `ulimit -n 4096`.
+
 ## 1 — M1: DSLX reference function (interpret + JIT cross-check)
 
 **Source.** Two `.x` files in `dslx/`:

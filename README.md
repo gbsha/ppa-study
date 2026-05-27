@@ -10,7 +10,7 @@ For power, performance, area (PPA) driven development, code is written in DSLX (
 
 To reproduce the current baseline (DSLX reference, multi-architecture codegen, and one librelane sky130 PnR run with PPA metrics), follow [HOWTO.md](./HOWTO.md). Every tool invocation and config file is documented there.
 
-`CLAUDE.md` is operational guidance for Claude Code sessions in this repo. `PLAN.md` is the study plan (parameter sweep, architecture strategy, milestones, gates). `DESIGN_NOTES.md` collects design explorations and rationale we've discussed but not (yet) committed to building. `METRICS.md` documents where every PPA number comes from — which tool and abstraction layer produces it, how faithful it is, and how it could be refined.
+`CLAUDE.md` is operational guidance for Claude Code sessions in this repo. `PLAN.md` is the study plan (parameter sweep, architecture strategy, milestones, gates). `DESIGN_NOTES.md` collects design explorations and rationale we've discussed but not (yet) committed to building. `METRICS.md` documents where every PPA number comes from — which tool and abstraction layer produces it, how faithful it is, and how it could be refined. `BLUEPRINT.md` is the guide to reusing this repo as a template for a *different* PPA study — what to change for a new function, parameters, or technology, and what transfers unchanged.
 
 ## Toolchain status
 

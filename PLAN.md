@@ -52,8 +52,10 @@ Even though phase 1 only uses one model, **don't hard-code `sky130` into directo
 **Known status of asap7 across the stack:**
 
 - XLS scheduling: works out of the box. Smoke-tested 2026-05-23 — `./external/xls-bin/bin/codegen_main` registry exposes `asap7, sky130, unit` (discoverable by passing a bogus `--delay_model`, which enumerates valid names). End-to-end `ir_converter_main → opt_main → codegen_main --generator=pipeline --delay_model={sky130,asap7,unit} --clock_period_ps=2000 --pipeline_stages=1 --reset=rst` on `fn add8(a:u8, b:u8) -> u8 { a + b }` produced valid SystemVerilog with exit 0 for each model.
-- OpenROAD: reportedly supports asap7.
-- Librelane (the nix-shell): unknown — likely needs custom configuration to register an asap7 PDK and flow. This is the actual phase 2 work item; don't attempt it during phase 1.
+- OpenROAD (the engine): supports asap7 — OpenROAD-flow-scripts (ORFS) ships an asap7 platform. But ORFS is a *different flow framework* than librelane, so using it means parallel infrastructure.
+- Librelane (the nix-shell): **does not support asap7** (verified 2026-05-27 on librelane 3.0.3 — it knows only `sky130` and `gf180mcu`; zero asap7 references). The librelane PDK config (PDN/RC rules, Magic/KLayout/Netgen sign-off decks, per-corner liberty, cell-name bindings) ships *inside* the open_pdks-built PDK at `<pdk>/libs.tech/openlane/`; asap7 has **no open_pdks build** and, being a predictive PDK, **no sign-off decks at all**. So asap7 PnR in librelane is a large, incomplete port — **not a config flag.**
+
+**Decision (2026-05-27): for asap7, report XLS delay-model metrics only** (critical path, flop count, BOM via `--delay-model asap7`, which works today — e.g. `bw8/nb4` = 767 ps vs sky130's 1809 ps on the same RTL). Full asap7 *physical* PPA via librelane is out of scope unless it becomes essential (the alternative would be ORFS, separate framework). See `BLUEPRINT.md` and `METRICS.md` §7.
 
 **Phase 2 entry criteria:** phase 1 is producing PPA numbers we trust on sky130, and we know what to compare across the two models. If librelane asap7 PnR turns out to need significant custom work, an interim fallback is to report asap7 results at the XLS scheduling level only (critical path, register count, scheduled stages from `--block_metrics_file`) — still useful for trend comparison even without place-and-route power/area.
 

@@ -181,16 +181,27 @@ The cheapest meaningful accuracy gain available to us is **vector-based power**
 
 | Metric group | sky130 (now) | asap7 (later) |
 |--------------|-------------|---------------|
-| XLS layer 2 (flop count, BOM, critical path) | ✅ `--delay_model=sky130` | ✅ `--delay_model=asap7` (XLS estimator supports it) |
-| Synthesis cell counts/area (layer 3) | ✅ | ⚠️ needs librelane asap7 PDK/flow config |
-| Area / utilization / wirelength / CTS (layer 4) | ✅ | ⚠️ same |
-| Signoff STA / power / IR-drop (layer 5) | ✅ | ⚠️ same |
+| XLS layer 2 (flop count, BOM, critical path) | ✅ `--delay_model=sky130` | ✅ `--delay_model=asap7` (works today: bw8/nb4 = 767 ps vs sky130 1809 ps) |
+| Synthesis cell counts/area (layer 3) | ✅ | ❌ librelane has no asap7 PDK (see below) |
+| Area / utilization / wirelength / CTS (layer 4) | ✅ | ❌ same |
+| Signoff STA / power / IR-drop (layer 5) | ✅ | ❌ same |
 
-So **all XLS-layer metrics are available for both** technologies today; the
-LibreLane PnR layers are sky130-only until the asap7 PDK/flow is configured
-(PLAN.md Phase 2). The interim asap7 fallback is therefore **layer-2 only**
-(critical path, flop count, BOM from the XLS delay model) — still useful for
-*trend* comparison without place-and-route.
+**Why the PnR layers are ❌ for asap7 (verified 2026-05-27, librelane 3.0.3).**
+LibreLane knows only `sky130` and `gf180mcu` — no `asap7` anywhere in the
+package. The PDK config that drives PnR (PDN/RC-extraction rules, Magic/KLayout/
+Netgen **sign-off decks**, per-corner liberty, ~100 cell-name/geometry bindings)
+ships *inside* the open_pdks-built PDK at `<pdk>/libs.tech/openlane/`. asap7 has
+**no open_pdks build**, and as a predictive PDK it has **no DRC/LVS sign-off
+decks at all** — so bringing it into librelane is a large *and* incomplete port,
+not a config flag. (OpenROAD the engine *does* support asap7 via ORFS, but ORFS
+is a separate flow framework.)
+
+**Decision: for asap7, use the XLS delay-model metrics (layer 2) only** —
+critical path, flop count, BOM. They work today (`--delay-model asap7`) and give
+the *trend* comparison Phase 2 wants (the binner is 767 ps on asap7 vs 1809 ps on
+sky130 — the node shrink shows up cleanly) without any PDK work. Full asap7
+physical PPA is out of scope unless it becomes essential; see `BLUEPRINT.md`
+"New technology / PDK".
 
 ---
 

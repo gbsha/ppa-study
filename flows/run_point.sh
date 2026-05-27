@@ -10,6 +10,10 @@
 # skips if its result already exists, so a sweep wrapper can fan many points out
 # in parallel (e.g. GNU parallel) safely. See PLAN.md M6.
 #
+# Adapting to a different function: only the FUNCTION-SPECIFIC block below (the
+# generated top) and the --bw-global/--n-bounds flags are binner-specific; the
+# XLS -> librelane chain is generic. See BLUEPRINT.md for the full swap-point list.
+#
 # Usage:
 #   flows/run_point.sh --bw-global 8 --n-bounds 4 [options]
 #
@@ -84,6 +88,9 @@ mkdir -p "$POINT_DIR"
 echo "[point] model=$DELAY_MODEL arch=$ARCH_TAG bw=$BW nb=$NB -> $POINT_DIR"
 
 # ---- 1. generate the concrete DSLX top --------------------------------------
+# === FUNCTION-SPECIFIC (binner) — to adapt to another design replace this block
+# === plus the --bw-global/--n-bounds flags and the binner / binner_top names.
+# === Everything else in this script is function-agnostic. See BLUEPRINT.md.
 # binner is parametric; IR conversion needs a non-parametric top. BW_BIN is left
 # to DSLX's std::clog2 so the bin-index width is never computed in bash.
 cat > "$POINT_DIR/top.x" <<EOF
@@ -102,6 +109,7 @@ pub fn binner_top(
     binner::binner<BW_GLOBAL, N_BOUNDS>(global_index, lower_bin_boundaries)
 }
 EOF
+# === end function-specific ===
 
 # ---- 2. DSLX -> IR -> optimised IR ------------------------------------------
 "$XLS_BIN/ir_converter_main" --dslx_stdlib_path="$STDLIB" --dslx_path="$DSLX_DIR" \

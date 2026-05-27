@@ -20,22 +20,19 @@ To reproduce the current baseline (DSLX reference, multi-architecture codegen, a
 
 The earlier version skew that made every stdlib import fail typecheck (`TypeInferenceError: uN[32][0] Zero-sized arrays cannot be indexed` in `enumerate`) is gone now that the binary and the stdlib it parses come from one revision. `dslx/binner.x` uses `std::clog2(N_BOUNDS)` directly as a parametric default; no inline-helper workaround is needed.
 
-### The binary set is nearly complete — the one real gap is RTL simulation
+### The binary set is complete for this flow — the one real gap is RTL simulation
 
-`external/xls-bin/` now ships 17 tools, covering the whole DSLX → IR → Verilog flow and then some: `interpreter_main`, `ir_converter_main`, `opt_main`, `codegen_main`, `eval_ir_main`, `delay_info_main`, `lec_main` (formal logic-equivalence checking), `prove_quickcheck_main`, `aot_compiler_main`, `dslx_fmt`, `dslx_ls`, `parse_and_typecheck_dslx_main`, `proto_to_dslx_main`, `type_layout_main`, `jit_wrapper_generator_main`, `print_bom`, `gather_design_stats`.
+The XLS binaries live in `external/xls-bin/bin/` (invoke them as `./external/xls-bin/bin/codegen_main`). The release ships **18 statically-linked C++ binaries**, covering the whole DSLX → IR → Verilog flow and then some: `interpreter_main`, `ir_converter_main`, `opt_main`, `codegen_main`, `eval_ir_main`, `eval_proc_main`, `delay_info_main`, `lec_main` (formal logic-equivalence checking), `prove_quickcheck_main`, `aot_compiler_main`, `dslx_fmt`, `dslx_ls`, `parse_and_typecheck_dslx_main`, `proto_to_dslx_main`, `type_layout_main`, `print_bom`, `benchmark_main`, `pass_metrics_main`. The cloned `xls-bin` repo also carries `README.md` (cross-build recipe) and `XLS_SUMMARY.md` (per-binary "what & why").
 
-The one absence that affects this study is **`simulate_module_main`** (RTL-level functional simulation of the generated Verilog). It cannot be linked statically, so it is not shipped and will not be. **Use an external simulator instead** — cocotb driving iverilog or verilator — when RTL/gate-level functional verification is needed. See `PLAN.md` M4 for how this is scheduled (deferred behind the first Pareto-frontier result, by priority — not by a missing binary).
+Three tools are deliberately **not** in the release:
 
-A few other upstream binaries are also still absent; only one currently matters here:
+| not shipped               | what it does                                         | how it's covered here    |
+|---------------------------|------------------------------------------------------|--------------------------|
+| `simulate_module_main`    | RTL functional sim of generated Verilog              | can't be linked statically; **use cocotb + iverilog/verilator** instead (`PLAN.md` M4) |
+| `gather_design_stats`     | Yosys/OpenSTA logs → `DesignStats` metrics proto     | a Python script; runs from a source checkout on the synth machine (xls-bin `README.md` Appendix) |
+| `jit_wrapper_generator_main` | Generates JIT-wrapper source from IR              | a Python build-time helper; not part of this flow |
 
-| absent binary            | what it does                                         | impact on this study     |
-|--------------------------|------------------------------------------------------|--------------------------|
-| `simulate_module_main`   | RTL functional sim of generated Verilog              | use cocotb + iverilog/verilator instead (M4) |
-| `eval_proc_main`         | Execute/test XLS procs                               | gates proc-level verification of the **M7** TDM variant |
-| `benchmark_main`         | Inspect scheduling under a delay model               | nice-to-have for M8 scheduler characterisation |
-| `pass_metrics_main`      | Visualise scheduler/codegen pass metrics             | nice-to-have for M8 sweep debugging |
-
-(`lec_main` is present and covers formal IR/netlist equivalence, so the old `check_ir_equivalence_main` gap is effectively closed.) If a still-missing tool would meaningfully help, flag it to the maintainer (the user maintains `github.com/gbsha/xls-bin` and can publish additional binaries on request) — **do not try to build XLS from source as a workaround.**
+The one absence that affects this study is **`simulate_module_main`** — see `PLAN.md` M4 for how the external-simulator path is scheduled (deferred behind the first Pareto-frontier result, by priority — not by a missing binary). `lec_main` is present and covers formal IR/netlist equivalence. `eval_proc_main` (proc evaluation, the **M7** gate) and `benchmark_main`/`pass_metrics_main` (pre-PnR scheduling metrics) are now all present. If a still-missing tool would meaningfully help, flag it to the maintainer (the user maintains `github.com/gbsha/xls-bin` and can publish additional binaries on request) — **do not try to build XLS from source as a workaround.**
 
 ## Study objective
 
@@ -95,11 +92,11 @@ Documentation can be found at
 
 The `google/xls` github repository is locally cloned to `external/xls`, for locally having access to the documentation and dslx language specification. Note that `external/xls` does **not** contain the binaries. It is pinned to tag `v0.0.0-10042-g81ff4fdf7` (commit `81ff4fdf7`); the `xls-bin` release below must be the one built from that same commit so the binaries and the stdlib they parse stay in sync.
 
-Install the binaries statically compiled from https://github.com/gbsha/xls-bin/ by downloading the release matching the pinned commit above (the `xls-81ff4fdf7` tag, built from the same `81ff4fdf7` that `external/xls` is checked out at):
+Install the binaries statically compiled from https://github.com/gbsha/xls-bin/ by downloading the release matching the pinned commit above. The release tag is `xls-<commit>-xlsbin-<build>` — here `xls-81ff4fdf7-xlsbin-1`, built from the same `81ff4fdf7` that `external/xls` is checked out at (the `-xlsbin-N` suffix is the bundle build number; bump it for a rebuild of the same commit). The binaries extract into `external/xls-bin/bin/`:
 ```
-mkdir -p ./external/xls-bin && cd ./external/xls-bin
+mkdir -p ./external/xls-bin/bin && cd ./external/xls-bin/bin
 
-curl -L -O https://github.com/gbsha/xls-bin/releases/download/xls-81ff4fdf7/xls-81ff4fdf7-linux-x86_64.tar.gz
-tar -xzf xls-81ff4fdf7-linux-x86_64.tar.gz
+curl -L -O https://github.com/gbsha/xls-bin/releases/download/xls-81ff4fdf7-xlsbin-1/xls-81ff4fdf7-xlsbin-1-linux-x86_64.tar.gz
+tar -xzf xls-81ff4fdf7-xlsbin-1-linux-x86_64.tar.gz
 chmod +x *
 ```

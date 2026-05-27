@@ -10,12 +10,12 @@ Read `PLAN.md` for the *why* (study methodology, milestone gates). This file is 
 
 ## 0 — Prerequisites and sanity check
 
-You must be inside the librelane nix-shell. The `external/xls-bin/` directory must be populated (see `README.md` "Install Tools").
+You must be inside the librelane nix-shell. The `external/xls-bin/bin/` directory must be populated with the XLS binaries (see `README.md` "Install Tools").
 
 ```bash
 # Confirm all four toolchains are visible.
 which librelane openroad yosys
-ls external/xls-bin/codegen_main
+ls external/xls-bin/bin/codegen_main
 ```
 
 Expected: the first three resolve to `/nix/store/...` paths; the fourth is an executable. If any of these fail, fix that before continuing.
@@ -34,7 +34,7 @@ Expected: the first three resolve to `/nix/store/...` paths; the fourth is an ex
 **Gate.** Run all DSLX tests and cross-check the DSLX interpreter against the IR JIT. The `--compare=jit` flag re-evaluates each test through the IR jitter and asserts equivalence — this is the strongest XLS-internal verification we have without `simulate_module_main`.
 
 ```bash
-./external/xls-bin/interpreter_main \
+./external/xls-bin/bin/interpreter_main \
     --dslx_stdlib_path=external/xls/xls/dslx/stdlib \
     --compare=jit dslx/binner.x
 ```
@@ -59,7 +59,7 @@ All commands assume project-root cwd. They write to `runs/` (gitignored).
 
 ```bash
 mkdir -p runs/sky130
-./external/xls-bin/ir_converter_main \
+./external/xls-bin/bin/ir_converter_main \
     --dslx_stdlib_path=external/xls/xls/dslx/stdlib \
     --dslx_path=dslx \
     --top=binner_top \
@@ -73,7 +73,7 @@ mkdir -p runs/sky130
 `opt_main` runs the standard XLS optimization pipeline (inlining, dead-code elimination, peepholes, …). For this tiny design it doesn't change much, but the codegen step expects optimized IR.
 
 ```bash
-./external/xls-bin/opt_main runs/sky130/binner_8x4.ir > runs/sky130/binner_8x4.opt.ir
+./external/xls-bin/bin/opt_main runs/sky130/binner_8x4.ir > runs/sky130/binner_8x4.opt.ir
 ```
 
 **Expected:** exit 0, `runs/sky130/binner_8x4.opt.ir` produced.
@@ -84,7 +84,7 @@ This is the "parallel" architecture in pure combinational form — useful for in
 
 ```bash
 mkdir -p runs/sky130/comb/bw8_nb4
-./external/xls-bin/codegen_main \
+./external/xls-bin/bin/codegen_main \
     --generator=combinational \
     --module_name=binner_top \
     --output_verilog_path=runs/sky130/comb/bw8_nb4/binner.v \
@@ -101,7 +101,7 @@ Demonstrates what *doesn't* happen if you just bump up `--pipeline_stages` witho
 
 ```bash
 mkdir -p runs/sky130/pipe_s4_2000ps/bw8_nb4
-./external/xls-bin/codegen_main \
+./external/xls-bin/bin/codegen_main \
     --generator=pipeline \
     --delay_model=sky130 \
     --clock_period_ps=2000 \
@@ -129,7 +129,7 @@ Now drive the clock period tight enough that XLS *must* spread comparators acros
 
 ```bash
 # Probe: deliberately too tight, scheduler reports the minimum.
-./external/xls-bin/codegen_main \
+./external/xls-bin/bin/codegen_main \
     --generator=pipeline --delay_model=sky130 --clock_period_ps=1 --pipeline_stages=4 \
     --reset=rst --module_name=binner_top \
     --output_verilog_path=/tmp/probe.v \
@@ -140,7 +140,7 @@ Now drive the clock period tight enough that XLS *must* spread comparators acros
 
 ```bash
 mkdir -p runs/sky130/pipe_s4_500ps/bw8_nb4
-./external/xls-bin/codegen_main \
+./external/xls-bin/bin/codegen_main \
     --generator=pipeline \
     --delay_model=sky130 \
     --clock_period_ps=509 \
@@ -178,7 +178,7 @@ So M3 uses a fourth codegen point — **one pipeline stage with registered I/O, 
 
 ```bash
 mkdir -p runs/sky130/pipe_s1_2000ps/bw8_nb4
-./external/xls-bin/codegen_main \
+./external/xls-bin/bin/codegen_main \
     --generator=pipeline \
     --delay_model=sky130 \
     --clock_period_ps=2000 \

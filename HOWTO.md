@@ -373,11 +373,12 @@ Each point writes only to `runs/<delay_model>/<arch>/bw<BW>_nb<NB>/` and skips i
 
 ```bash
 flows/run_sweep.sh --dry-run                    # print the grid, run nothing
-flows/run_sweep.sh                              # default: {parallel,pipe_s2,pipe_s4} × nb {2,4,8}, bw 8
+flows/run_sweep.sh                              # default: parallel (1 stage) × bw {4,8,12,16} × nb {2,4,8,16}
+flows/run_sweep.sh --arch "parallel pipe_s4"    # opt back into a pipelined point if a critical path is too long
 flows/run_sweep.sh --jobs 4 --librelane-jobs 4  # OUTER points × INNER librelane threads (≈ nproc)
 ```
 
-It dispatches points through GNU parallel when present (else a dependency-free bash job pool), logs each point under `runs/_sweeps/<timestamp>/`, and prints an OK/FAIL summary. Re-run to resume — finished points are skipped. librelane is ~5 min/point; at 4×4 the default 9-point grid is a handful of minutes on a 16-core box.
+The default grid fixes one architecture (1 pipeline stage) and sweeps the build-time parameters `bw_global` × `n_boundaries` — that's the active focus (see `PLAN.md`); multi-stage pipelining is an opt-in via `--arch`. It dispatches points through GNU parallel when present (else a dependency-free bash job pool), logs each point under `runs/_sweeps/<timestamp>/`, and prints an OK/FAIL summary. Re-run to resume — finished points are skipped. librelane is ~5 min/point; the 16-point default grid is roughly 20 minutes at 4×4 on a 16-core box.
 
 ### 4c — Aggregate and plot the frontier
 

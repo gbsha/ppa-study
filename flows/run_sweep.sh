@@ -22,9 +22,11 @@
 #
 # Options:
 #   --arch "LIST"        space-separated arch tokens: parallel pipe_sN
-#                                                  (default: "parallel pipe_s2 pipe_s4")
-#   --bw-global "LIST"   space-separated bitwidths              (default: "8")
-#   --n-bounds "LIST"    space-separated bin counts             (default: "2 4 8")
+#                                                  (default: "parallel" — 1 stage;
+#                                                   pass e.g. "parallel pipe_s4" to add
+#                                                   pipelined points if a path is too long)
+#   --bw-global "LIST"   space-separated bitwidths              (default: "4 8 12 16")
+#   --n-bounds "LIST"    space-separated bin counts             (default: "2 4 8 16")
 #   --delay-model NAME   sky130|asap7|unit                      (default: sky130)
 #   --jobs N             OUTER: concurrent points               (default: 4)
 #   --librelane-jobs N   INNER: threads per librelane run        (default: 4)
@@ -38,9 +40,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_POINT="$ROOT/flows/run_point.sh"
 
 # ---- defaults (grid is easy to edit / override) ------------------------------
-ARCHS="parallel pipe_s2 pipe_s4"
-BWS="8"
-NBS="2 4 8"
+# Default focus (per PLAN's active path): one architecture (1 pipeline stage =
+# "parallel"), sweeping the build-time parameters bw_global x n_boundaries.
+# Multi-stage pipelining (pipe_sN) is a deliberate opt-in via --arch.
+ARCHS="parallel"
+BWS="4 8 12 16"
+NBS="2 4 8 16"
 DELAY_MODEL="sky130"
 OUTER=4
 INNER=4

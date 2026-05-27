@@ -111,5 +111,5 @@ Phase 2 (asap7 via librelane) starts after M8.
 (All scoped to phase 1; the librelane-asap7 question lives in the Phase 2 section above.)
 
 - For the refined threshold form, is a clean DSLX expression possible that lets the scheduler exploit the reduced-bitwidth compare (i.e., does `opt_main` recognise the `_m << _e` pattern as a narrower compare), or does the DSLX need to explicitly extract the mantissa before comparing?
-- What's the right metric layer between XLS and librelane — feed Verilog straight in, or also export the XLS scheduling report / block metrics (`--block_metrics_file`) for cross-checking?
+- What's the right metric layer between XLS and librelane — feed Verilog straight in, or also export the XLS scheduling report / block metrics (`--block_metrics_file`) for cross-checking? (`METRICS.md` maps every metric to its producing tool, layer, and fidelity — the reference for this question.)
 - For the proc-based TDM variant: latency is measured how — total cycles per result, or steady-state throughput? Decide before building so the comparison across architectures is apples-to-apples.

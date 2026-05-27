@@ -389,12 +389,13 @@ mamba env create -f environment.yml             # or: conda env create -f enviro
 mamba run -n ppa-study flows/plot_pareto.py      # or: conda activate ppa-study && flows/plot_pareto.py
 ```
 
-`plot_pareto.py` walks `runs/` and writes:
+`plot_pareto.py` walks `runs/` (keeping one delay model — `--delay-model sky130` by default, since PnR metrics are sky130-only; see METRICS.md §7) and writes:
 
-- `results/ppa_sweep.csv` — the flat table (committed; one row per point, provenance + area/power/timing).
-- `results/pareto_area_vs_clock.png`, `…_area_vs_power.png`, `…_flops_vs_clock.png` — frontier plots (gitignored).
+- `results/ppa_sweep.csv` — the flat table (committed; one row per point: provenance + area/power + **two critical-path numbers**, `xls_crit_path_ns` pre-PnR and `pnr_crit_path_{tt,ss}_ns` post-PnR = `librelane_clock − r2r setup ws`, plus `max_slew_viol_ss`).
+- scaling plots `results/scaling_{area,critpath,power}_vs_n_bounds.png` — each metric vs `n_boundaries`, one line per `bw_global` (the critical-path plot overlays the XLS estimate dashed and the post-PnR ss solid, so the optimism gap is visible); pass `--x bw_global` to put bitwidth on the x-axis instead.
+- frontier plots `results/pareto_area_vs_critpath.png` and `…_area_vs_power.png` — all points with the Pareto front marked (gitignored).
 
-To **regenerate the plots** (and refresh the CSV) at any time, just re-run that `plot_pareto.py` line — it re-reads whatever is currently under `runs/`. The CSV and printed table need no env: `flows/plot_pareto.py --no-plot` runs from the bare nix-shell; only the PNGs require the `ppa-study` env.
+To **regenerate** at any time, re-run that `plot_pareto.py` line — it re-reads whatever is under `runs/`. The CSV and printed table need no env: `flows/plot_pareto.py --no-plot` runs from the bare nix-shell; only the PNGs require the `ppa-study` env. Note the ss critical path can be inflated by max-slew violations on high-fanout nets (`max_slew_viol_ss` flags it) until signoff is tuned — see METRICS.md §4.
 
 ## 5 — Cleanup
 

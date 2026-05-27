@@ -118,7 +118,8 @@ build-time parameters.
 | includes | delay model only | cells + placement + routed-wire RC + corner derating |
 | in `point.json`? | yes (`codegen_clock_ps`) | derivable (`librelane_clock_ns` + `ws` from metrics.json) |
 
-Caveats to bake into the eventual `plot_pareto.py` wiring (the next work item):
+Caveats baked into the `plot_pareto.py` wiring (done — both numbers are now CSV
+columns `xls_crit_path_ns` and `pnr_crit_path_{tt,ss}_ns`):
 
 - Use the **register-to-register** slack (`timing__setup_r2r__ws`) for the
   internal logic path; for this design it equals `timing__setup__ws`, but in
@@ -231,9 +232,11 @@ schema for cross-project comparison.
 area, multi-corner timing (WNS/TNS/WS, setup+hold), vectorless power
 (total/internal/switching/leakage), IR drop, DRC/LVS/antenna/slew counts.
 
-**Immediate gap (next work item):** wire the **post-PnR critical path**
-(`clock − ws`) and surface **both** critical-path numbers in `plot_pareto.py`
-(§4), and add area/power-vs-(`bw_global`,`n_boundaries`) views.
+**Aggregated + plotted (done):** `plot_pareto.py` joins `point.json` + `metrics.json`
+across the sweep, writes `results/ppa_sweep.csv` with **both** critical-path
+numbers, and renders area/critical-path/power scaling vs `bw_global` /
+`n_boundaries` plus area-vs-critpath and area-vs-power Pareto frontiers. A first
+16-point sky130 grid (`parallel × bw{4,8,12,16} × nb{2,4,8,16}`) is in hand.
 
 **Deferred refinements:** vector-based power via cocotb→SAIF→OpenSTA (§5, with
 M4); a librelane `CLOCK_PERIOD` sweep for true fastest-closing clock (§4);

@@ -1,22 +1,32 @@
-# Python environment for the sweep analysis / visualization (PLAN.md M8).
+# Python environment for the sweep analysis (PLAN.md M8) and the cocotb RTL
+# verification (PLAN.md M4, see COCOTB.md).
 #
-# Deliberately minimal — most of the flow runs under the bare librelane
-# nix-shell python. Two tools need something the nix-shell lacks:
+# Self-contained on purpose: this env is the **XLS+cocotb side** of the
+# distributed workflow — it does NOT depend on the librelane nix-shell.
+# A separate machine running the librelane nix-shell consumes the binner.v
+# this env produces. Tools here:
 #   - flows/plot_pareto.py — its plotting needs matplotlib (which pulls numpy);
 #     the aggregation, CSV export, and Pareto math are stdlib and run anywhere.
 #   - flows/ir_to_dot.py — parses XLS IR into Graphviz DOT (stdlib) and shells
 #     out to `dot` to render. The `graphviz` package below provides that binary,
 #     so rendering doesn't depend on a system graphviz install.
+#   - verif/runner.py — drives cocotb against the codegen binner.v using
+#     iverilog (default) or verilator. Both simulators are pulled from
+#     conda-forge so the testbench runs anywhere the env installs.
 # flows/extract_metrics.py is stdlib-only by design.
 #
 #   mamba env create -f environment.yml      # first time (or: conda env create)
 #   mamba env update -f environment.yml      # apply changes to an existing env
 #   mamba run -n ppa-study flows/plot_pareto.py
 #   mamba run -n ppa-study flows/ir_to_dot.py runs/sky130/binner_8x4.opt.ir
+#   mamba run -n ppa-study verif/runner.py --verilog runs/sky130/parallel/bw8_nb4/binner.v
 name: ppa-study
 channels:
   - conda-forge
 dependencies:
-  - python >=3.11
+  - python =3.13
   - matplotlib >=3.8
   - graphviz >=9
+  - cocotb >=2.0
+  - iverilog >=12       # default simulator — easier dialect, easier debug
+  - verilator >=5       # opt-in faster simulator — pass --simulator verilator

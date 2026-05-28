@@ -36,7 +36,9 @@ The one absence that affects this study is **`simulate_module_main`** — see `P
 
 ## Study objective
 
-Consider the following python code:
+Consider the following python code (the executable form lives at
+[`verif/binner_ref.py`](./verif/binner_ref.py) and is what the cocotb
+testbench checks every cycle against):
 ```python
 def fun(global_index: int, lower_bin_boundaries: list[int]) -> int:
     # Contract: inactive entries hold a sentinel that global_index never reaches.

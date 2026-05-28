@@ -192,13 +192,13 @@ The optimized IR *is* the dataflow graph — every node lists its operands — s
 Parsing and DOT emission are stdlib, so the DOT text needs no environment:
 
 ```bash
-flows/ir_to_dot.py runs/sky130/binner_8x4.opt.ir --format dot -o /tmp/binner.dot
+python3 flows/ir_to_dot.py runs/sky130/binner_8x4.opt.ir --format dot -o /tmp/binner.dot
 ```
 
-Rendering to SVG/PNG shells out to `dot`, which the `ppa-study` conda env provides (`graphviz` is in `environment.yml` — see §4c for the env):
+Rendering to SVG/PNG shells out to `dot`, which the `ppa-study` conda env provides (`graphviz` is in `environment.yml` — see §5c for the env):
 
 ```bash
-mamba run -n ppa-study flows/ir_to_dot.py runs/sky130/binner_8x4.opt.ir
+mamba run -n ppa-study python flows/ir_to_dot.py runs/sky130/binner_8x4.opt.ir
 # -> runs/sky130/binner_8x4.opt.svg  (output defaults to the input path with the format extension)
 ```
 
@@ -356,7 +356,7 @@ Timing slack itself is clean at all corners (`WNS = 0 ns` everywhere) — the 10
 ### 3d — Extract PPA metrics
 
 ```bash
-flows/extract_metrics.py \
+python3 flows/extract_metrics.py \
     "$(ls -dt flows/librelane/binner_8x4/runs/RUN_* | head -1)/final/metrics.json"
 ```
 
@@ -463,8 +463,8 @@ The default grid fixes one architecture (1 pipeline stage) and sweeps the build-
 Only plotting needs matplotlib; aggregation, the CSV, and the Pareto math are stdlib. Create the env once (miniforge `mamba`, or `conda`):
 
 ```bash
-mamba env create -f environment.yml             # or: conda env create -f environment.yml
-mamba run -n ppa-study flows/plot_pareto.py      # or: conda activate ppa-study && flows/plot_pareto.py
+mamba env create -f environment.yml                    # or: conda env create -f environment.yml
+mamba run -n ppa-study python flows/plot_pareto.py     # or: conda activate ppa-study && python flows/plot_pareto.py
 ```
 
 `plot_pareto.py` walks `runs/` (keeping one delay model — `--delay-model sky130` by default, since PnR metrics are sky130-only; see METRICS.md §7) and writes:
@@ -509,6 +509,7 @@ flows/extract_metrics.py                 PPA summary extractor (stdlib-only)
 flows/run_point.sh                       one design point, end to end (M6)
 flows/run_sweep.sh                       grid of points in parallel (M6)
 flows/run_verif.sh                       grid of cocotb verifications (M4a)
+flows/pull_xls_artifacts.sh              forward-only mailbox sync (§8 distributed)
 flows/plot_pareto.py                     sweep aggregation + Pareto plots (M8)
 flows/ir_to_dot.py                       XLS IR -> Graphviz computation graph + fanout report
 environment.yml                          conda env (cocotb, iverilog, verilator, matplotlib, graphviz)
@@ -527,3 +528,60 @@ runs/_sweeps/<timestamp>/                 run_sweep.sh dispatch logs + joblog
 runs/_verif/<timestamp>/                  run_verif.sh dispatch logs + per-point build dirs
 results/*.png                            Pareto plots (regenerate via plot_pareto.py)
 ```
+
+## 8 — Distributed: codegen on one machine, PnR on another
+
+When the XLS+cocotb half (Path A) and the librelane half (Path B) live on different machines, the forward-only **mailbox** pattern keeps the workflow simple: machine A produces `binner.v` and provenance in its `runs/` tree; machine B mounts A's repo read-only and copies what it needs into its own `runs/` before invoking librelane locally. PnR runs entirely against local disk — never over the network.
+
+The script that does the copy is `flows/pull_xls_artifacts.sh`. It uses `rsync` with explicit include rules so only the codegen output transfers; librelane outputs (`metrics.json`, `RUN_*` dirs), dispatch logs (`_sweeps/`, `_verif/`), and per-point summaries stay local to whichever machine produced them. No structural change to the repo, no shared mutable state, no PnR-over-sshfs.
+
+### 8a — Set up the mount on machine B
+
+```bash
+mkdir -p ~/mnt/ppa-xls
+sshfs -o ro userA@machineA:/PATH/TO/PPA_STUDY ~/mnt/ppa-xls
+```
+
+`-o ro` (read-only) makes the directionality explicit. Other mount tools (NFS, plain bind-mount of a local checkout) work equivalently — the script just needs a path that mirrors this repo's `runs/` layout.
+
+### 8b — Pull the codegen artifacts
+
+```bash
+flows/pull_xls_artifacts.sh ~/mnt/ppa-xls
+```
+
+Idempotent — re-run any time A has produced new points; rsync transfers only what changed. Per-point files copied: `binner.v`, `top.x`, `binner.ir`, `binner.opt.ir`, `binner.metrics.textproto`, `binner.schedule.textproto`, `point.json`.
+
+### 8c — Run PnR locally on B
+
+Everything below is unchanged from §3 / §5 — librelane sees a normal local `runs/` tree:
+
+```bash
+flows/run_sweep.sh                              # whole grid, librelane runs locally
+# or one point:
+flows/run_point.sh --bw-global 8 --n-bounds 4
+```
+
+`run_point.sh` is content-addressed by output path, so if `binner.v` is already present (from the pull) it picks up where the script's earlier steps left off; the XLS chain re-runs cheaply against the existing IR.
+
+### 8d — Aggregate on B
+
+Forward-only means `plot_pareto.py` runs on B, against B's local `runs/`. B has both A's `point.json` (pulled) and B's `metrics.json` (just produced), so the join is complete:
+
+```bash
+mamba run -n ppa-study python flows/plot_pareto.py
+```
+
+The committed `results/ppa_sweep.csv` is the canonical aggregated table — commit from whichever machine has the full grid (B, in this topology).
+
+### 8e — Unmount when done
+
+```bash
+fusermount -u ~/mnt/ppa-xls
+```
+
+### Notes
+
+- **HOWTO §3 (hand-walked PnR) on B.** The hand-walked path expects `flows/librelane/binner_8x4/binner.v` (a copy of one specific point's Verilog into the librelane config dir). After the pull, that file is *not* there — it's at `runs/sky130/pipe_s1_2000ps/bw8_nb4/binner.v` instead. Either copy it manually (`cp runs/sky130/pipe_s1_2000ps/bw8_nb4/binner.v flows/librelane/binner_8x4/`) or just use the scripted path (`flows/run_point.sh`) which doesn't need that copy.
+- **Reverse direction (B → A).** Not handled by this script. If you want A to see B's metrics (e.g., A is also running aggregation), the simplest is to mount B on A and do a similar `rsync` of `metrics.json`/`ppa_summary.txt`. The forward-only design is enough for the most common A=dev/codegen, B=headless-worker split.
+- **Concurrent runs.** Don't run librelane against the same point dir on both machines at once. The mailbox keeps the codegen artifacts read-only on A while B does PnR, so the natural ownership is unambiguous.

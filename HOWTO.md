@@ -258,7 +258,7 @@ Two reads:
 
 Together these motivate the popcount rewrite tracked in `THERMOMETER.md`: the segment that dominates the budget at large `n_boundaries` is exactly the one whose structure ignores the monotonicity contract.
 
-**Post-PnR comparison of the `prio` rewrite (THERMOMETER Sketch B).** `dslx/binner.x` ships two variants now — `binner` (the fold reference) and `binner_prio` (the `ctz(!cmps)` priority encoder that exploits the monotonicity contract). Select with `flows/run_point.sh --variant {ref,prio}`; the prio runs land under `runs/sky130/parallel_prio/...` so they don't clobber the reference grid. The XLS opt pass collapses `ctz(!cmps)` into two canonical IR ops with log-depth delay models: `one_hot(c, lsb_prio=true)` followed by `encode(...)`. Running librelane Classic at a 10 ns clock on both points gives:
+**Post-PnR comparison of the `prio` rewrite (THERMOMETER Sketch B).** `dslx/binner.x` ships two variants now — `binner` (the fold reference) and `binner_prio` (the `ctz(!cmps)` priority encoder that exploits the monotonicity contract). Select with `./flows/run_point.sh --variant {ref,prio}`; the prio runs land under `runs/sky130/parallel_prio/...` so they don't clobber the reference grid. The XLS opt pass collapses `ctz(!cmps)` into two canonical IR ops with log-depth delay models: `one_hot(c, lsb_prio=true)` followed by `encode(...)`. Running librelane Classic at a 10 ns clock on both points gives:
 
 | metric                    | bw8_nb4 ref | bw8_nb4 prio | bw16_nb16 ref | bw16_nb16 prio |
 | ------------------------- | ----------- | ------------ | ------------- | -------------- |
@@ -427,7 +427,7 @@ The runner reads `point.json` next to the verilog to pick up `bw_global`, `n_bou
 `flows/run_verif.sh` mirrors `run_sweep.sh` in shape: it enumerates `variants × archs × bw_global × n_bounds`, looks up `runs/<model>/<arch_tag>/bw<bw>_nb<nb>/binner.v`, and dispatches `verif/runner.py` per point.
 
 ```bash
-flows/run_verif.sh --variants "ref prio" --bw-global "4 8 12 16" --n-bounds "2 4 8 16"
+./flows/run_verif.sh --variants "ref prio" --bw-global "4 8 12 16" --n-bounds "2 4 8 16"
 ```
 
 Per-point logs land in `runs/_verif/<timestamp>/<tag>.{log,status}`; the summary tallies `OK` / `FAIL` / `MISSING (codegen first)`. Only `FAIL` gates the exit status — `MISSING` is a soft skip for points whose codegen hasn't been run yet (`run_sweep.sh --skip-pnr` produces those without needing librelane).
@@ -442,18 +442,18 @@ Sections 1–3 walk the flow by hand for one point. `flows/run_point.sh` automat
 
 ```bash
 # Reproduces the section-3 baseline, into runs/sky130/parallel/bw8_nb4/.
-flows/run_point.sh --bw-global 8 --n-bounds 4
+./flows/run_point.sh --bw-global 8 --n-bounds 4
 ```
 
-Each point writes only to `runs/<delay_model>/<arch>/bw<BW>_nb<NB>/` and skips if its result already exists (`--force` rebuilds, `--skip-pnr` does the fast XLS-only half). `--arch pipeline --stages N` selects a deeper pipeline; the codegen clock is auto-probed by default. See `flows/run_point.sh --help`.
+Each point writes only to `runs/<delay_model>/<arch>/bw<BW>_nb<NB>/` and skips if its result already exists (`--force` rebuilds, `--skip-pnr` does the fast XLS-only half). `--arch pipeline --stages N` selects a deeper pipeline; the codegen clock is auto-probed by default. See `./flows/run_point.sh --help`.
 
 ### 5b — The grid
 
 ```bash
-flows/run_sweep.sh --dry-run                    # print the grid, run nothing
-flows/run_sweep.sh                              # default: parallel (1 stage) × bw {4,8,12,16} × nb {2,4,8,16}
-flows/run_sweep.sh --arch "parallel pipe_s4"    # opt back into a pipelined point if a critical path is too long
-flows/run_sweep.sh --jobs 4 --librelane-jobs 4  # OUTER points × INNER librelane threads (≈ nproc)
+./flows/run_sweep.sh --dry-run                    # print the grid, run nothing
+./flows/run_sweep.sh                              # default: parallel (1 stage) × bw {4,8,12,16} × nb {2,4,8,16}
+./flows/run_sweep.sh --arch "parallel pipe_s4"    # opt back into a pipelined point if a critical path is too long
+./flows/run_sweep.sh --jobs 4 --librelane-jobs 4  # OUTER points × INNER librelane threads (≈ nproc)
 ```
 
 The default grid fixes one architecture (1 pipeline stage) and sweeps the build-time parameters `bw_global` × `n_boundaries` — that's the active focus (see `PLAN.md`); multi-stage pipelining is an opt-in via `--arch`. It dispatches points through GNU parallel when present (else a dependency-free bash job pool), logs each point under `runs/_sweeps/<timestamp>/`, and prints an OK/FAIL summary. Re-run to resume — finished points are skipped. librelane is ~5 min/point; the 16-point default grid is roughly 20 minutes at 4×4 on a 16-core box.
@@ -556,16 +556,16 @@ If you ever see "XLS binaries not found" on B, you ran an XLS-half script there.
 mamba activate ppa-study                  # the conda env (Path A)
 
 # 1. Codegen the whole grid (no librelane needed).
-flows/run_sweep.sh --phase xls
+./flows/run_sweep.sh --phase xls
 
 # 2. Verify every Verilog functionally with cocotb.
-flows/run_verif.sh
+./flows/run_verif.sh
 ```
 
 For a single point during iteration:
 
 ```bash
-flows/run_point_xls.sh --bw-global 8 --n-bounds 4
+./flows/run_point_xls.sh --bw-global 8 --n-bounds 4
 python verif/runner.py --verilog runs/sky130/parallel/bw8_nb4/binner.v
 ```
 
@@ -581,10 +581,10 @@ mkdir -p ~/mnt/ppa-xls
 sshfs -o ro userA@machineA:/PATH/TO/PPA_STUDY ~/mnt/ppa-xls
 
 # 2. Pull the codegen artifacts (idempotent; re-run as A produces more).
-flows/pull_xls_artifacts.sh ~/mnt/ppa-xls
+./flows/pull_xls_artifacts.sh ~/mnt/ppa-xls
 
 # 3. Run PnR for the grid (no XLS binaries needed).
-flows/run_sweep.sh --phase pnr
+./flows/run_sweep.sh --phase pnr
 
 # 4. Aggregate. B has A's point.json (pulled) and B's metrics.json (just
 #    produced) so the join is complete.
@@ -597,7 +597,7 @@ fusermount -u ~/mnt/ppa-xls
 For a single point during iteration:
 
 ```bash
-flows/run_point_pnr.sh --bw-global 8 --n-bounds 4
+./flows/run_point_pnr.sh --bw-global 8 --n-bounds 4
 ```
 
 ### What the mailbox transfers

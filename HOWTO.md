@@ -226,6 +226,29 @@ Two things to read off it:
 
 This is the timing companion to §2g: the graph shows *what* is computed and how it fans out; this shows *how long* each step takes and what therefore bounds the clock. It also explains the §2e stage assignment — the cheap parallel compares pack into the early stages, while the expensive single nodes (lookup, subtract) each claim a stage of their own.
 
+**Scaling check at the largest grid point — `bw16_nb16`.** Re-running `delay_info_main` on `runs/sky130/parallel/bw16_nb16/binner.opt.ir` gives 4986 ps with this profile (the `pos=` columns are elided here for readability):
+
+```
+uge.241                399 ps    8 %   one 16-bit comparator (15 in parallel)
+sel.246/.403/.628/.415/.634/.640/.646
+  + interleaved add.328/.653/.657/.661/.665   serial mux/add chain over 7
+  + bin_index merge: bin_index_assoc + bin_index               of 15 cmps (left fold)
+                       =  3327 ps    67 %                +
+                                                              balanced add-tree
+                                                              over the other 8
+array_index.319        585 ps   12 %   16:1 16-bit lookup mux on bin_index
+local_index            675 ps   13 %   16-bit subtract
+                      ─────────
+                      4986 ps  100 %
+```
+
+Two reads:
+
+- **The popcount went from 31 % of the budget at `bw8_nb4` to 67 % at `bw16_nb16`.** The optimizer keeps the first ~7 comparators in the fold's mux/add chain (the pattern from §2h above, just longer) and switches to a balanced adder tree for the remainder, then merges. The serial arm is what bin_index waits on, so the depth scales near-linearly with `n_boundaries`. The lookup mux (log-depth in cases) and the subtractor (width) both scale much more slowly.
+- **Post-PnR, the tt corner still closes cleanly.** At a 10 ns clock the nom_tt setup ws is +0.977 ns with zero max-slew violations; max_tt setup ws is +0.848 ns with 11 max-slew warnings that don't break setup. The ss corner does *not* close (setup ws -7.16 ns, 121 max-slew violations on `global_index` broadcast nets) — that's a separate signoff-config problem, not a structural fanout failure. Yosys/OpenROAD spend ~22 % of all stdcells (472 timing_repair_buffer + 59 setup_buffer out of 2369) absorbing the fanout pressure that lets tt close at all.
+
+Together these motivate the popcount rewrite tracked in `THERMOMETER.md`: the segment that dominates the budget at large `n_boundaries` is exactly the one whose structure ignores the monotonicity contract.
+
 ## 3 — M3: one Verilog through librelane sky130 PnR
 
 M2 generated Verilog optimised for *inspection*. None of those three variants drops directly into librelane Classic flow:

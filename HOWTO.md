@@ -506,8 +506,10 @@ verif/test_binner.py                     parametric cocotb test (M4a)
 verif/runner.py                          cocotb runner CLI (M4a)
 flows/librelane/binner_8x4/config.json   librelane Classic flow config (§3 baseline)
 flows/extract_metrics.py                 PPA summary extractor (stdlib-only)
-flows/run_point.sh                       one design point, end to end (M6)
-flows/run_sweep.sh                       grid of points in parallel (M6)
+flows/run_point.sh                       one design point, end to end — wrapper (M6, §8)
+flows/run_point_xls.sh                   one point, XLS half only — needs XLS binaries (§8 machine A)
+flows/run_point_pnr.sh                   one point, PnR half only — needs librelane (§8 machine B)
+flows/run_sweep.sh                       grid of points in parallel; --phase {xls,pnr,both} (M6, §8)
 flows/run_verif.sh                       grid of cocotb verifications (M4a)
 flows/pull_xls_artifacts.sh              forward-only mailbox sync (§8 distributed)
 flows/plot_pareto.py                     sweep aggregation + Pareto plots (M8)
@@ -531,57 +533,81 @@ results/*.png                            Pareto plots (regenerate via plot_paret
 
 ## 8 — Distributed: codegen on one machine, PnR on another
 
-When the XLS+cocotb half (Path A) and the librelane half (Path B) live on different machines, the forward-only **mailbox** pattern keeps the workflow simple: machine A produces `binner.v` and provenance in its `runs/` tree; machine B mounts A's repo read-only and copies what it needs into its own `runs/` before invoking librelane locally. PnR runs entirely against local disk — never over the network.
+When the XLS+cocotb half (Path A) and the librelane half (Path B) live on different machines, the forward-only **mailbox** pattern keeps the workflow simple: machine A produces `binner.v` and provenance in its `runs/` tree; machine B mounts A's repo read-only, pulls codegen artifacts into its own `runs/`, and invokes librelane locally. PnR runs entirely against local disk — never over the network.
 
-The script that does the copy is `flows/pull_xls_artifacts.sh`. It uses `rsync` with explicit include rules so only the codegen output transfers; librelane outputs (`metrics.json`, `RUN_*` dirs), dispatch logs (`_sweeps/`, `_verif/`), and per-point summaries stay local to whichever machine produced them. No structural change to the repo, no shared mutable state, no PnR-over-sshfs.
+### Machine roles and per-machine scripts
 
-### 8a — Set up the mount on machine B
+The flow is split into three entry-point scripts so it's structurally impossible to run an XLS-binary-needing step on B (or a librelane-needing step on A):
+
+| Script                       | Needs        | Machine | Runs                       |
+| ---------------------------- | ------------ | ------- | -------------------------- |
+| `flows/run_point_xls.sh`     | XLS binaries | **A**   | DSLX → IR → opt → Verilog  |
+| `flows/run_point_pnr.sh`     | librelane    | **B**   | librelane Classic + metrics |
+| `flows/run_point.sh`         | both         | local   | wrapper chaining XLS + PnR (single-machine convenience) |
+| `flows/run_verif.sh`         | conda env    | **A**   | cocotb RTL verification    |
+| `flows/run_sweep.sh --phase` | per phase    | A or B  | grid of points; `--phase {xls,pnr,both}` |
+| `flows/pull_xls_artifacts.sh`| rsync        | **B**   | mailbox sync from a mounted A |
+
+If you ever see "XLS binaries not found" on B, you ran an XLS-half script there. If you see "librelane not on PATH" on A, you ran a PnR-half script there. The split prevents accidents; the error messages tell you the right command.
+
+### On machine A — codegen + verify
 
 ```bash
+mamba activate ppa-study                  # the conda env (Path A)
+
+# 1. Codegen the whole grid (no librelane needed).
+flows/run_sweep.sh --phase xls
+
+# 2. Verify every Verilog functionally with cocotb.
+flows/run_verif.sh
+```
+
+For a single point during iteration:
+
+```bash
+flows/run_point_xls.sh --bw-global 8 --n-bounds 4
+python verif/runner.py --verilog runs/sky130/parallel/bw8_nb4/binner.v
+```
+
+### On machine B — mount, pull, PnR, aggregate
+
+```bash
+cd /PATH/TO/YOUR/LIBRELANE && nix-shell    # Path B: librelane available
+cd /PATH/TO/PPA_STUDY
+mamba activate ppa-study                   # for extract_metrics + plot_pareto
+
+# 1. Mount A's repo read-only.
 mkdir -p ~/mnt/ppa-xls
 sshfs -o ro userA@machineA:/PATH/TO/PPA_STUDY ~/mnt/ppa-xls
-```
 
-`-o ro` (read-only) makes the directionality explicit. Other mount tools (NFS, plain bind-mount of a local checkout) work equivalently — the script just needs a path that mirrors this repo's `runs/` layout.
-
-### 8b — Pull the codegen artifacts
-
-```bash
+# 2. Pull the codegen artifacts (idempotent; re-run as A produces more).
 flows/pull_xls_artifacts.sh ~/mnt/ppa-xls
-```
 
-Idempotent — re-run any time A has produced new points; rsync transfers only what changed. Per-point files copied: `binner.v`, `top.x`, `binner.ir`, `binner.opt.ir`, `binner.metrics.textproto`, `binner.schedule.textproto`, `point.json`.
+# 3. Run PnR for the grid (no XLS binaries needed).
+flows/run_sweep.sh --phase pnr
 
-### 8c — Run PnR locally on B
-
-Everything below is unchanged from §3 / §5 — librelane sees a normal local `runs/` tree:
-
-```bash
-flows/run_sweep.sh                              # whole grid, librelane runs locally
-# or one point:
-flows/run_point.sh --bw-global 8 --n-bounds 4
-```
-
-`run_point.sh` is content-addressed by output path, so if `binner.v` is already present (from the pull) it picks up where the script's earlier steps left off; the XLS chain re-runs cheaply against the existing IR.
-
-### 8d — Aggregate on B
-
-Forward-only means `plot_pareto.py` runs on B, against B's local `runs/`. B has both A's `point.json` (pulled) and B's `metrics.json` (just produced), so the join is complete:
-
-```bash
+# 4. Aggregate. B has A's point.json (pulled) and B's metrics.json (just
+#    produced) so the join is complete.
 mamba run -n ppa-study python flows/plot_pareto.py
-```
 
-The committed `results/ppa_sweep.csv` is the canonical aggregated table — commit from whichever machine has the full grid (B, in this topology).
-
-### 8e — Unmount when done
-
-```bash
+# 5. Unmount.
 fusermount -u ~/mnt/ppa-xls
 ```
 
+For a single point during iteration:
+
+```bash
+flows/run_point_pnr.sh --bw-global 8 --n-bounds 4
+```
+
+### What the mailbox transfers
+
+`pull_xls_artifacts.sh` uses `rsync` with explicit include rules: only the codegen output transfers (`binner.v`, `top.x`, `binner.ir`, `binner.opt.ir`, `binner.metrics.textproto`, `binner.schedule.textproto`, `point.json`). librelane outputs (`metrics.json`, `RUN_*` dirs), per-point summaries (`ppa_summary.txt`, `config.json`), and dispatch logs (`_sweeps/`, `_verif/`) stay local to whichever machine produced them. No structural change to the repo, no shared mutable state, no PnR-over-sshfs.
+
 ### Notes
 
-- **HOWTO §3 (hand-walked PnR) on B.** The hand-walked path expects `flows/librelane/binner_8x4/binner.v` (a copy of one specific point's Verilog into the librelane config dir). After the pull, that file is *not* there — it's at `runs/sky130/pipe_s1_2000ps/bw8_nb4/binner.v` instead. Either copy it manually (`cp runs/sky130/pipe_s1_2000ps/bw8_nb4/binner.v flows/librelane/binner_8x4/`) or just use the scripted path (`flows/run_point.sh`) which doesn't need that copy.
-- **Reverse direction (B → A).** Not handled by this script. If you want A to see B's metrics (e.g., A is also running aggregation), the simplest is to mount B on A and do a similar `rsync` of `metrics.json`/`ppa_summary.txt`. The forward-only design is enough for the most common A=dev/codegen, B=headless-worker split.
-- **Concurrent runs.** Don't run librelane against the same point dir on both machines at once. The mailbox keeps the codegen artifacts read-only on A while B does PnR, so the natural ownership is unambiguous.
+- **Single-machine workflows are unchanged.** `flows/run_point.sh` and `flows/run_sweep.sh` (default `--phase both`) keep working exactly as before — they chain the XLS half and the PnR half on one machine. The split scripts are *additional* entry points, not replacements.
+- **`--librelane-clock-ns` should match between machines.** The XLS script writes this value to `point.json` so `plot_pareto.py` can compute the post-PnR critical path; the PnR script rewrites it with whatever value PnR actually used, so a mismatch self-heals after PnR runs. Default `10` on both is fine for the common case.
+- **HOWTO §3 hand-walked path on B.** The hand-walked path expects `flows/librelane/binner_8x4/binner.v` (a copy of one specific point's Verilog into the librelane config dir). After the pull, that file is *not* there — it's at `runs/sky130/pipe_s1_2000ps/bw8_nb4/binner.v` instead. Either copy it manually (`cp runs/sky130/pipe_s1_2000ps/bw8_nb4/binner.v flows/librelane/binner_8x4/`) or just use the scripted path (`flows/run_point_pnr.sh`) which doesn't need that copy.
+- **Reverse direction (B → A).** Not handled by this script. If you want A to see B's metrics (e.g., A is also running aggregation), the simplest is to mount B on A and `rsync` `metrics.json`/`ppa_summary.txt`. The forward-only design fits the common A=dev/codegen, B=headless-worker split.
+- **Concurrent runs.** Don't run librelane against the same point dir on both machines at once. The mailbox keeps codegen artifacts read-only on A while B does PnR, so the natural ownership is unambiguous.

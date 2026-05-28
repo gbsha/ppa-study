@@ -13,6 +13,14 @@
 # librelane half multithreads unevenly (routing saturates, synth/STA don't), so
 # this is deliberately conservative rather than OUTER=nproc.
 #
+# The --phase flag selects which half runs per point:
+#   xls   → run_point_xls.sh   (codegen only; no librelane needed)
+#   pnr   → run_point_pnr.sh   (PnR only; binner.v must already exist)
+#   both  → run_point.sh       (chain XLS then PnR — single-machine workflow)
+# In the distributed (two-machine) workflow (HOWTO §8): use --phase xls on
+# the XLS machine, --phase pnr on the librelane machine. --skip-pnr is a
+# backward-compat alias for --phase xls.
+#
 # Dispatch uses GNU parallel when present (with --joblog for timing/resume),
 # falling back to a dependency-free bash job pool (wait -n) otherwise. Both
 # honour OUTER via -j and produce the same per-point logs and OK/FAIL statuses.
@@ -32,16 +40,16 @@
 #   --bw-global "LIST"   space-separated bitwidths              (default: "4 8 12 16")
 #   --n-bounds "LIST"    space-separated bin counts             (default: "2 4 8 16")
 #   --delay-model NAME   sky130|asap7|unit                      (default: sky130)
+#   --phase NAME         xls|pnr|both                           (default: both)
 #   --jobs N             OUTER: concurrent points               (default: 4)
 #   --librelane-jobs N   INNER: threads per librelane run        (default: 4)
-#   --skip-pnr           XLS-only (no librelane) — fast grid sanity check
+#   --skip-pnr           alias for --phase xls (backward-compat)
 #   --force              rebuild points even if cached
 #   --dry-run            print the grid and the commands, run nothing
 #   -h, --help           show this help
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUN_POINT="$ROOT/flows/run_point.sh"
 
 # ---- defaults (grid is easy to edit / override) ------------------------------
 # Default focus (per PLAN's active path): one architecture (1 pipeline stage =
@@ -52,9 +60,10 @@ VARIANTS="ref"
 BWS="4 8 12 16"
 NBS="2 4 8 16"
 DELAY_MODEL="sky130"
+PHASE="both"
 OUTER=4
 INNER=4
-SKIP_PNR=0; FORCE=0; DRY=0
+FORCE=0; DRY=0
 
 usage() { sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//; $d'; }
 
@@ -65,15 +74,24 @@ while [[ $# -gt 0 ]]; do
     --bw-global)      BWS="$2"; shift 2 ;;
     --n-bounds)       NBS="$2"; shift 2 ;;
     --delay-model)    DELAY_MODEL="$2"; shift 2 ;;
+    --phase)          PHASE="$2"; shift 2 ;;
     --jobs)           OUTER="$2"; shift 2 ;;
     --librelane-jobs) INNER="$2"; shift 2 ;;
-    --skip-pnr)       SKIP_PNR=1; shift ;;
+    --skip-pnr)       PHASE="xls"; shift ;;           # backward-compat alias
     --force)          FORCE=1; shift ;;
     --dry-run)        DRY=1; shift ;;
     -h|--help)        usage; exit 0 ;;
     *) echo "run_sweep.sh: unknown argument '$1'" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+# ---- resolve --phase to a per-point script -----------------------------------
+case "$PHASE" in
+  xls)  RUN_POINT="$ROOT/flows/run_point_xls.sh" ;;
+  pnr)  RUN_POINT="$ROOT/flows/run_point_pnr.sh" ;;
+  both) RUN_POINT="$ROOT/flows/run_point.sh"     ;;
+  *) echo "run_sweep.sh: --phase must be 'xls', 'pnr', or 'both' (got '$PHASE')" >&2; exit 2 ;;
+esac
 [[ -x "$RUN_POINT" ]] || { echo "run_sweep.sh: $RUN_POINT not executable" >&2; exit 1; }
 
 # ---- translate an arch token into run_point.sh flags -------------------------
@@ -87,15 +105,17 @@ arch_flags() {
 }
 
 # ---- build the point list ----------------------------------------------------
+# --librelane-jobs only applies to PnR (xls or both phases); the XLS-only
+# child script doesn't accept it.
 declare -a TAGS POINT_ARGS
 for arch in $ARCHS; do
   af="$(arch_flags "$arch")"
   for variant in $VARIANTS; do
     for bw in $BWS; do
       for nb in $NBS; do
-        common="--delay-model $DELAY_MODEL --bw-global $bw --n-bounds $nb $af --variant $variant --librelane-jobs $INNER"
-        [[ $SKIP_PNR -eq 1 ]] && common="$common --skip-pnr"
-        [[ $FORCE   -eq 1 ]] && common="$common --force"
+        common="--delay-model $DELAY_MODEL --bw-global $bw --n-bounds $nb $af --variant $variant"
+        [[ "$PHASE" != "xls" ]] && common="$common --librelane-jobs $INNER"
+        [[ $FORCE -eq 1 ]] && common="$common --force"
         TAGS+=("${arch}_${variant}_bw${bw}_nb${nb}")
         POINT_ARGS+=("$common")
       done
@@ -103,7 +123,7 @@ for arch in $ARCHS; do
   done
 done
 
-echo "Sweep: ${#TAGS[@]} points  | model=$DELAY_MODEL  archs=[$ARCHS]  variants=[$VARIANTS]  bw=[$BWS]  nb=[$NBS]"
+echo "Sweep: ${#TAGS[@]} points  | model=$DELAY_MODEL  phase=$PHASE  archs=[$ARCHS]  variants=[$VARIANTS]  bw=[$BWS]  nb=[$NBS]"
 echo "Concurrency: OUTER=$OUTER points × INNER=$INNER librelane threads  (nproc=$(nproc))"
 
 if [[ $DRY -eq 1 ]]; then

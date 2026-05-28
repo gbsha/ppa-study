@@ -4,13 +4,29 @@ format: pdf
 
 # Readme
 
-For power, performance, area (PPA) driven development, code is written in DSLX (part of google's XLS SDK, see below), compiled to verilog, synthesized by librelane, and then PPA metrics are collected.
+For power, performance, area (PPA) driven development, code is written in DSLX (part of google's XLS SDK, see below), compiled to verilog, **functionally verified with cocotb**, synthesized by librelane, and then PPA metrics are collected.
+
+## Two entry paths
+
+The flow splits cleanly into a librelane-free half and a librelane half. Pick the one that matches your install — you can do useful blueprint work without librelane.
+
+- **Path A — XLS + cocotb (no librelane).** Conda env only (`mamba env create -f environment.yml`). Covers DSLX tests, IR + Verilog codegen (`run_point.sh --skip-pnr`), and RTL functional verification (`run_verif.sh`). All you need to evolve the DSLX and trust the generated Verilog.
+- **Path B — full PnR (adds librelane).** Path A *plus* the librelane nix-shell (`cd $LIBRELANE && nix-shell`, then this repo). Adds the post-synthesis + PnR + signoff metrics: area, power, post-route timing. Drives `run_point.sh` (full) and `run_sweep.sh`.
+
+See `HOWTO.md` for the reproduction walk-through — each section is marked with the path it requires.
 
 ## Where to start
 
-To reproduce the current baseline (DSLX reference, multi-architecture codegen, and one librelane sky130 PnR run with PPA metrics), follow [HOWTO.md](./HOWTO.md). Every tool invocation and config file is documented there.
-
-`CLAUDE.md` is operational guidance for Claude Code sessions in this repo. `PLAN.md` is the study plan (parameter sweep, architecture strategy, milestones, gates). `DESIGN_NOTES.md` collects design explorations and rationale we've discussed but not (yet) committed to building. `METRICS.md` documents where every PPA number comes from — which tool and abstraction layer produces it, how faithful it is, and how it could be refined. `BLUEPRINT.md` is the guide to reusing this repo as a template for a *different* PPA study — what to change for a new function, parameters, or technology, and what transfers unchanged.
+| Goal                                            | Read                                     |
+|-------------------------------------------------|------------------------------------------|
+| Reproduce the baseline end-to-end               | [HOWTO.md](./HOWTO.md)                   |
+| Reuse this repo for a different PPA study       | [BLUEPRINT.md](./BLUEPRINT.md)           |
+| Understand where every PPA number comes from    | [METRICS.md](./METRICS.md)               |
+| Add or extend functional verification           | [COCOTB.md](./COCOTB.md)                 |
+| The popcount / monotonicity tradeoff (Sketch B) | [THERMOMETER.md](./THERMOMETER.md)       |
+| Methodology, milestones, optional extensions    | [PLAN.md](./PLAN.md)                     |
+| Design candidates we discussed but didn't build | [DESIGN_NOTES.md](./DESIGN_NOTES.md)     |
+| Operational guidance for Claude Code sessions   | [CLAUDE.md](./CLAUDE.md)                 |
 
 ## Toolchain status
 
@@ -78,16 +94,36 @@ The objective is to assess whether (qualitatively) and how much (quantitatively)
 
 ## Enter the environment with your copilot
 
+**Path A — XLS + cocotb only** (DSLX, codegen, RTL verification — no PnR):
+
 ```
-cd /PATH/TO/YOUR/LIBRELANE
-nix-shell
 cd /PATH/TO/THIS_REPOSITORY
+mamba activate ppa-study      # one-time setup: mamba env create -f environment.yml
+claude
+```
+
+**Path B — full PnR** (everything above plus librelane):
+
+```
+cd /PATH/TO/YOUR/LIBRELANE && nix-shell
+cd /PATH/TO/THIS_REPOSITORY
+mamba activate ppa-study      # conda env layers on top of the nix-shell
 claude
 ```
 
 ## Install Tools
 
-### Librelane
+### Conda env (Path A and Path B both need this)
+
+`environment.yml` defines the `ppa-study` env with cocotb + iverilog + verilator + matplotlib + graphviz, all from conda-forge. Create with miniforge `mamba` (or `conda`):
+
+```
+mamba env create -f environment.yml
+```
+
+This is everything Path A needs. Path B layers librelane on top.
+
+### Librelane (Path B only)
 
 Use nix-based librelane installation following
 * https://librelane.readthedocs.io/en/latest/installation/nix_installation/installation_linux.html

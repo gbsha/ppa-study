@@ -1,10 +1,17 @@
 # THERMOMETER.md — exploiting monotonic thresholds in the binner
 
-This document is a working discussion. The aim is to converge on **how to encode
-the "thresholds are strictly monotonically increasing" property into the DSLX so
-that the resulting IR exploits it**, without descending to gate-level
-hand-coding. We collect primitives, sketch candidate DSLX shapes, and call out
-the trade-offs. Implementation comes after we agree on the direction.
+This document records the design space for **encoding the "thresholds are
+strictly monotonically increasing" property into the DSLX so that the
+resulting IR exploits it**, without descending to gate-level hand-coding.
+**Sketch B is implemented** (`dslx/binner.x:binner_prio`) and PnR-verified
+(see `HOWTO.md` §2h "Post-PnR comparison" — at `bw16_nb16` it drops the
+critical path 9.02 → 7.98 ns and vectorless power 16.27 → 3.54 mW, with a
+regression at `bw8_nb4`). Sketches A, C, D remain candidate follow-ons —
+see §6.
+
+The doc reads as: primer on the primitives, what XLS gives us, the four
+candidate shapes (B shipped, A/C/D optional), best-practice rules, and
+open questions to validate further.
 
 Context: today's `dslx/binner.x` is a left-fold conditional-add over the
 comparison vector. From `HOWTO.md §2h` the sky130 critical path for the small
@@ -145,8 +152,10 @@ the right hardware regardless of optimizer cleverness.
 
 ## 3. Candidate DSLX shapes for the binner
 
-Four sketches, each highlighting a specific trade-off. None of these are
-committed code; the point is to discuss which to pursue first.
+Four sketches, each highlighting a specific trade-off. **Sketch B is the one
+that shipped** — `dslx/binner.x:binner_prio`, formally proved equivalent to
+the fold reference via `prove_quickcheck_main` and RTL-verified via cocotb
+(`COCOTB.md`). The other three are candidate follow-ons (see §6).
 
 ### Sketch A — flat popcount (no monotonicity exploited)
 
@@ -388,22 +397,50 @@ Open questions we should answer in the IR / delay_info before committing:
 
 ---
 
-## 6. Where to take this next
+## 6. Status and optional follow-ons
 
-When we're aligned on direction, the implementation order is:
+### What shipped
 
-1. Add `binner_ref` (today's fold) under a clear "reference / spec" name so we
-   keep the simplest semantic anchor.
-2. Implement Sketch C alongside it as `binner_onehot` (or whatever name we
-   settle on). QuickCheck against `binner_ref`.
-3. Rebuild `runs/sky130/binner_8x4.opt.ir` for the new top and read the IR
-   directly — confirm the `one_hot_sel` / `encode` shape.
-4. Re-run `delay_info_main` and compare against the 1809 ps baseline.
-5. Only then re-run the librelane PnR sweep at the same grid points and
-   refresh the Pareto plots.
-6. If the result is close to the model, attempt Sketch D as a second
-   architecture point (area-for-speed). Keep Sketch B as a third reference
-   architecture if the comparison is interesting.
+- **Sketch B (`dslx/binner.x:binner_prio`).** `ctz(!cmps)` collapsed by the
+  XLS optimizer into `one_hot(lsb_prio=true)` + `encode` — two canonical
+  log-depth IR ops. The fold reference `binner` is kept alongside as the
+  semantic anchor (`prove_quickcheck_main` proves equivalence over all
+  256 / 65 536 `global_index` values for fixed monotonic bound arrays).
+  Selected at codegen time via `flows/run_point.sh --variant prio`.
+- **Post-PnR data** (`HOWTO.md` §2h "Post-PnR comparison" subsection): at
+  `bw16_nb16`, critical path 9.02 → 7.98 ns (−11.6 %), vectorless power
+  16.27 → 3.54 mW (−78 %), ss-corner failure halves. At `bw8_nb4` the
+  rewrite *regresses* (5.32 vs 4.71 ns) — small-N synthesis prefers the
+  fold's mux chain over a 4-output one_hot encoder. There is a crossover
+  somewhere between `nb=4` and `nb=16`; locating it is the natural next
+  sweep.
 
-Until step 1, no DSLX changes. The point of this document is to make sure
-we've picked the right hill to climb.
+### Optional follow-ons (none required to consider this complete)
+
+- **Sketch A** — flat `std::popcount`. Cheapest control point against
+  Sketch B's win: shows whether the gain is the balanced reduction tree
+  alone, or the priority-encoder structure on top.
+- **Sketch C** — one-hot boundary + `one_hot_sel` fused threshold lookup.
+  Predicted to drop the 423–585 ps `array_index` mux layer on top of
+  Sketch B's gain. Requires verifying that `one_hot_sel` retains its
+  log-depth tree when the selector isn't explicitly tagged one-hot.
+- **Sketch D** — parallel subtractors + `one_hot_sel` over their results.
+  Area-for-speed extreme; only attractive when subtractor cost is modest.
+
+### Settled open questions
+
+The §5 questions kept here as historical record:
+
+- *Does `one_hot_sel` on a non-`one_hot`-tagged selector retain log-depth?* —
+  Not directly probed: Sketch B sidesteps `one_hot_sel` by going through
+  `one_hot` + `encode`. Still open for Sketch C.
+- *Is the QuickCheck against the fold reference exhaustive enough?* —
+  Resolved: `prove_quickcheck_main` proves the property symbolically
+  (`dslx/binner.x:prop_prio_matches_ref_*`), not just samples it.
+- *Are we measuring the right thing?* — Resolved: post-PnR comparison is
+  done end-to-end (PLAN.md M8, HOWTO §2h).
+
+The Yosys/ABC techmapping observation — at small N the fold's mux chain
+maps better than `one_hot`'s priority encoder — is the new open question
+that emerged from PnR. Worth a sweep across the full grid to map the
+crossover.

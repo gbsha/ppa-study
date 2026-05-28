@@ -54,9 +54,14 @@ In `run_point.sh` the function-specific block is fenced with
 | `run_point.sh` — names | `binner.ir` / `binner.opt.ir` / `binner.v`, `--top=binner_top`, `--module_name=binner_top`, and the generated librelane `"DESIGN_NAME": "binner_top"` | your top name (keep them consistent) |
 | `run_sweep.sh` | the `--bw-global`/`--n-bounds` axis flags + `BWS`/`NBS` defaults | your parameter axes |
 | `plot_pareto.py` | the `bw_global`/`n_bounds` columns in `COLUMNS` and `load_record` | your parameter columns (METRIC_KEYS and Pareto math are generic) |
+| `verif/binner_ref.py` | the Python reference function (cocotb checks against this every cycle) | your function's reference, same signature as the DSLX |
+| `verif/test_binner.py` | port shape: `clk`/`rst`, the input names, the packed `out` `{bin_index, local_index}` unpacking — driven by `BW_GLOBAL`/`N_BOUNDS`/`PIPELINE_STAGES` env vars | your DUT's port shape + how to unpack `out`; the latency formula (`stages + 2`) and the random-bounds generator are reusable |
+| `run_verif.sh` | the `--bw-global`/`--n-bounds` axes (mirroring `run_sweep.sh`) | your parameter axes |
 
 What does **not** change: codegen flags, clock auto-probe, librelane invocation
-+ exit handling, `extract_metrics.py`, the metric keys, `ir_to_dot.py`.
++ exit handling, `extract_metrics.py`, the metric keys, `ir_to_dot.py`, the
+cocotb runner pattern (`cocotb_tools.runner.get_runner` + iverilog), the
+`latency = stages + 2` formula (a cocotb-iverilog quirk, not function-specific).
 
 A function whose parameters happen to be `(bw, count)` is nearly a drop-in (just
 the DSLX + names). A different parameter *shape* (e.g. three build-time params,
@@ -120,8 +125,9 @@ For the function-family flow to work without surprises:
 - A **non-parametric top** with the I/O you want as ports (the generated `top.x`
   monomorphizes the parametric body) — pipelined codegen adds the `clk`/`rst`.
 - **DSLX `#[test]`s** so M1's `interpreter_main --compare=jit` gate means
-  something (this, plus the in-flow `Yosys.EQY`, is your functional safety net
-  until cocotb/M4).
+  something. Together with the cocotb RTL functional verification (M4a,
+  `COCOTB.md`) and the in-flow `Yosys.EQY` (RTL-vs-gate logical equivalence,
+  `METRICS.md` §3), this is the functional safety net.
 - Emit **plain V2005** (`--use_system_verilog=false`) for Yosys.
 
 ---
@@ -131,10 +137,16 @@ For the function-family flow to work without surprises:
 1. Write `dslx/<fn>.x` + tests → gate: `interpreter_main --compare=jit` (M1).
 2. Edit the `run_point.sh` swap points (§2); run one point `--skip-pnr` → check
    the generated `top.x`, IR, and `flop_count` (M2). `ir_to_dot.py` helps here.
-3. Run one full point (with PnR) → confirm `final/metrics.json` + the PPA summary
-   (M3).
-4. Set `run_sweep.sh` axes; sweep; `plot_pareto.py` (M6/M8).
-5. New technology: decide layer-2-only (asap7) vs full PnR (sky130/gf180) per §4.
+3. Write `verif/<fn>_ref.py` and update `verif/test_binner.py` (the unpacking
+   + port names) to match your DUT; run `verif/runner.py --verilog …` on one
+   `--skip-pnr` point. RTL functional gate (M4a). This step is **Path-A only**
+   — you can complete steps 1–3 without librelane.
+4. Run one full point (with PnR) → confirm `final/metrics.json` + the PPA summary
+   (M3). This is the first step that needs librelane (Path B).
+5. Set `run_sweep.sh` axes; sweep; `plot_pareto.py` (M6/M8). `run_verif.sh`
+   over the grid layers cocotb on top.
+6. New technology: XLS delay-model trend works out of the box for any model;
+   librelane PnR is sky130/gf180 only (§4).
 
-If steps 1–3 pass for your function, the rest is the easy, parameter-turning
+If steps 1–4 pass for your function, the rest is the easy, parameter-turning
 kind of work — which is the whole point of having a blueprint.

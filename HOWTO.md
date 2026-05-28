@@ -2,25 +2,34 @@
 format: pdf
 ---
 
-# HOWTO: reproduce the M1–M3 baseline
+# HOWTO: reproduce the baseline
 
-This walks through every command needed to take this repo from a clean clone to the **M3 baseline PPA numbers** on sky130 — DSLX reference function, multi-architecture codegen from one source, and one librelane Classic-flow run with extracted PPA metrics. Each tool call is shown with its full CLI; each config file is shown with its full content. Sections 1–3 are the hand-walked flow; **section 4** shows the scripts that automate it into a parameter sweep and the first Pareto frontier (M6, M8).
+This walks through every command needed to take this repo from a clean clone to the baseline PPA numbers and verification results on sky130 — DSLX reference function, codegen from one source, cocotb RTL functional verification, one librelane Classic-flow run with extracted PPA metrics, and the scripted sweep producing the first Pareto frontier. Each tool call is shown with its full CLI; each config file is shown with its full content.
 
-Read `PLAN.md` for the *why* (study methodology, milestone gates). This file is the *how*.
+Read `PLAN.md` for the *why* (study methodology, milestones, optional extensions). `README.md` "Two entry paths" explains which sections need librelane and which don't:
+
+| Section          | Milestone(s) | Path A (conda env) | Path B (+ librelane) |
+| ---------------- | ------------ | ------------------ | -------------------- |
+| §1 DSLX          | M1           | ✓                  | ✓                    |
+| §2 codegen       | M2           | ✓                  | ✓                    |
+| §3 PnR           | M3           |                    | ✓ (librelane needed) |
+| §4 verification  | M4a          | ✓                  | ✓                    |
+| §5 sweep + plots | M6, M8       | partial (`--skip-pnr` only) | ✓ (full)    |
 
 ## 0 — Prerequisites and sanity check
 
-You must be inside the librelane nix-shell. The `external/xls-bin/bin/` directory must be populated with the XLS binaries (see `README.md` "Install Tools").
+Path A users: `mamba activate ppa-study` is enough (env from `environment.yml`); skip the librelane check.
+
+Path B users: be inside the librelane nix-shell *and* `mamba activate ppa-study`. The `external/xls-bin/bin/` directory must be populated with the XLS binaries (see `README.md` "Install Tools").
 
 ```bash
-# Confirm all four toolchains are visible.
-which librelane openroad yosys
-ls external/xls-bin/bin/codegen_main
+# Path B — confirm both toolchains are visible.
+which librelane openroad yosys                  # /nix/store/... (Path B only)
+ls external/xls-bin/bin/codegen_main            # executable (both paths)
+mamba run -n ppa-study which iverilog cocotb-config   # conda env (both paths)
 ```
 
-Expected: the first three resolve to `/nix/store/...` paths; the fourth is an executable. If any of these fail, fix that before continuing.
-
-**Toolchain note** (see README "Toolchain status" for detail): `xls-bin` and `external/xls` are pinned to the same XLS revision, so `import std;` works and `dslx/binner.x` uses `std::clog2` directly — pass `--dslx_stdlib_path=external/xls/xls/dslx/stdlib` on every invocation so the import resolves. The binary set is nearly complete; the one gap relevant here is `simulate_module_main` (RTL sim), which is replaced by an external simulator (cocotb + iverilog/verilator) and isn't needed for this M1–M3 baseline.
+**Toolchain note** (see README "Toolchain status" for detail): `xls-bin` and `external/xls` are pinned to the same XLS revision, so `import std;` works and `dslx/binner.x` uses `std::clog2` directly — pass `--dslx_stdlib_path=external/xls/xls/dslx/stdlib` on every invocation so the import resolves. The binary set is nearly complete; `simulate_module_main` (RTL sim) is the one gap — covered by §4 (cocotb + iverilog from the conda env). See `COCOTB.md` for the verification framework.
 
 **Harmless startup message:** the XLS binaries may print `[symbolize_elf.inc : 379] RAW: Unable to get high fd: rc=0, limit=1024` to stderr. This is just Abseil's crash-backtrace symbolizer failing to reserve a high file descriptor under a low open-files limit; it does not affect the result (it goes to stderr, not the `>`-redirected output file). To silence it, raise the limit in your shell first: `ulimit -n 4096`.
 
@@ -353,7 +362,7 @@ flows/extract_metrics.py \
 
 The extractor (`flows/extract_metrics.py`, ~70 lines of Python) reads the `final/metrics.json` librelane writes for every successful or partially-successful run, and prints the keys that matter for this study. The full JSON has hundreds of keys; if you want to see them all, just `cat`/`jq` the file directly.
 
-**Python environment for this script:** stdlib only (`json`, `sys`) — no third-party packages. Runs against whatever `python3` resolves to on PATH; inside the librelane nix-shell that's the bundled `/nix/store/.../bin/python3` (3.13.9). No conda/pip env needed today. That changes once M8 brings pandas/numpy/matplotlib for sweep aggregation and plotting (see PLAN.md M8 note) — at that point a project-level `environment.yml` lands at the repo root.
+**Python environment for this script:** stdlib only (`json`, `sys`) — no third-party packages. Runs against whatever `python3` resolves to on PATH; the conda env `ppa-study` python and the nix-shell python both work. Aggregation + plotting (§5) needs the conda env for matplotlib; functional verification (§4) needs it for cocotb + iverilog.
 
 **Expected output** (numbers should be byte-identical given the same PDK version and tool revisions):
 
@@ -398,11 +407,38 @@ Achieved: full DSLX → IR → V2005 Verilog → librelane Classic → sky130 Pn
 1. "Parallel architecture" for PPA must mean `--generator=pipeline --pipeline_stages=1` (one stage of logic between registered I/O), not `--generator=combinational`.
 2. `--use_system_verilog=false` is mandatory for the Yosys path.
 
-## 4 — Sweep and Pareto frontier (M6, M8)
+## 4 — M4a: cocotb RTL functional verification
 
-Sections 1–3 walk the flow by hand for one point. `flows/run_point.sh` automates exactly that chain (generated DSLX top → `ir_converter` → `opt` → `codegen` → librelane → `extract_metrics`) for any `(arch, bw_global, n_bounds)`; `flows/run_sweep.sh` runs a grid of points in parallel; and `flows/plot_pareto.py` turns the results into a CSV table and Pareto plots.
+This section runs **without librelane** — pure Path A. Drives the codegen `binner.v` cycle-by-cycle with random stimulus and checks against the Python reference in `verif/binner_ref.py`. The full design rationale is in `COCOTB.md`; here is the reproduction.
 
-### 4a — One point via the script
+### 4a — A single point
+
+```bash
+mamba run -n ppa-study python verif/runner.py \
+    --verilog runs/sky130/parallel/bw8_nb4/binner.v
+```
+
+The runner reads `point.json` next to the verilog to pick up `bw_global`, `n_bounds`, `pipeline_stages`. CLI flags (`--bw-global`, `--n-bounds`, `--stages`, `--simulator {icarus,verilator}`, `--seed`, `--num-bound-sets`, `--trials-per-set`) override. Build/results land under `runs/_verif/build/<tag>/` so the runs tree consumed by `plot_pareto.py` stays clean.
+
+**Expected:** the final line reads `[verif] OK — 1/1 tests passed`. Wall time ~0.13 s at `bw16_nb16`; ~4096 vectors per point.
+
+### 4b — The whole grid
+
+`flows/run_verif.sh` mirrors `run_sweep.sh` in shape: it enumerates `variants × archs × bw_global × n_bounds`, looks up `runs/<model>/<arch_tag>/bw<bw>_nb<nb>/binner.v`, and dispatches `verif/runner.py` per point.
+
+```bash
+flows/run_verif.sh --variants "ref prio" --bw-global "4 8 12 16" --n-bounds "2 4 8 16"
+```
+
+Per-point logs land in `runs/_verif/<timestamp>/<tag>.{log,status}`; the summary tallies `OK` / `FAIL` / `MISSING (codegen first)`. Only `FAIL` gates the exit status — `MISSING` is a soft skip for points whose codegen hasn't been run yet (`run_sweep.sh --skip-pnr` produces those without needing librelane).
+
+This is decoupled from PnR: verif only needs `binner.v`, so it can chase `run_sweep.sh --skip-pnr` without ever touching librelane. That matches the distributed-workflow model (codegen + verify on machine A, PnR on machine B).
+
+## 5 — Sweep and Pareto frontier (M6, M8)
+
+Sections 1–3 walk the flow by hand for one point. `flows/run_point.sh` automates exactly that chain (generated DSLX top → `ir_converter` → `opt` → `codegen` → librelane → `extract_metrics`) for any `(arch, bw_global, n_bounds, variant)`; `flows/run_sweep.sh` runs a grid of points in parallel; and `flows/plot_pareto.py` turns the results into a CSV table and Pareto plots.
+
+### 5a — One point via the script
 
 ```bash
 # Reproduces the section-3 baseline, into runs/sky130/parallel/bw8_nb4/.
@@ -411,7 +447,7 @@ flows/run_point.sh --bw-global 8 --n-bounds 4
 
 Each point writes only to `runs/<delay_model>/<arch>/bw<BW>_nb<NB>/` and skips if its result already exists (`--force` rebuilds, `--skip-pnr` does the fast XLS-only half). `--arch pipeline --stages N` selects a deeper pipeline; the codegen clock is auto-probed by default. See `flows/run_point.sh --help`.
 
-### 4b — The grid
+### 5b — The grid
 
 ```bash
 flows/run_sweep.sh --dry-run                    # print the grid, run nothing
@@ -422,7 +458,7 @@ flows/run_sweep.sh --jobs 4 --librelane-jobs 4  # OUTER points × INNER librelan
 
 The default grid fixes one architecture (1 pipeline stage) and sweeps the build-time parameters `bw_global` × `n_boundaries` — that's the active focus (see `PLAN.md`); multi-stage pipelining is an opt-in via `--arch`. It dispatches points through GNU parallel when present (else a dependency-free bash job pool), logs each point under `runs/_sweeps/<timestamp>/`, and prints an OK/FAIL summary. Re-run to resume — finished points are skipped. librelane is ~5 min/point; the 16-point default grid is roughly 20 minutes at 4×4 on a 16-core box.
 
-### 4c — Aggregate and plot the frontier
+### 5c — Aggregate and plot the frontier
 
 Only plotting needs matplotlib; aggregation, the CSV, and the Pareto math are stdlib. Create the env once (miniforge `mamba`, or `conda`):
 
@@ -439,7 +475,7 @@ mamba run -n ppa-study flows/plot_pareto.py      # or: conda activate ppa-study 
 
 To **regenerate** at any time, re-run that `plot_pareto.py` line — it re-reads whatever is under `runs/`. The CSV and printed table need no env: `flows/plot_pareto.py --no-plot` runs from the bare nix-shell; only the PNGs require the `ppa-study` env. Note the ss critical path can be inflated by max-slew violations on high-fanout nets (`max_slew_viol_ss` flags it) until signoff is tuned — see METRICS.md §4.
 
-## 5 — Cleanup
+## 6 — Cleanup
 
 To wipe everything regenerable (gitignored only):
 
@@ -447,27 +483,36 @@ To wipe everything regenerable (gitignored only):
 rm -rf runs/ flows/librelane/binner_8x4/runs/ flows/librelane/binner_8x4/binner.v results/*.png
 ```
 
-To re-run from scratch, repeat sections 1–3 (hand-walked) or section 4 (scripted).
+To re-run from scratch, repeat sections 1–3 (hand-walked) or section 5 (scripted); section 4 is independent and re-runs against whatever Verilog is currently under `runs/`.
 
-## 6 — Where everything lives
+## 7 — Where everything lives
 
 Committed:
 
 ```
 HOWTO.md                                 this file
-README.md                                project intro + toolchain status
+README.md                                project intro + entry paths + orientation
 CLAUDE.md                                operational guidance for Claude Code
-PLAN.md                                  study plan: parameters, architectures, milestones, gates
-dslx/binner.x                            parametric DSLX function + tests
-dslx/binner_top_8x4.x                    concrete top instantiation for BW=8, N=4
-flows/librelane/binner_8x4/config.json   librelane Classic flow config (hand-walked baseline)
+PLAN.md                                  study plan: parameters, milestones, optional extensions
+BLUEPRINT.md                             guide to reusing this repo for a different PPA study
+METRICS.md                               where every PPA number comes from (tool, layer, fidelity)
+COCOTB.md                                cocotb RTL functional verification (M4a)
+THERMOMETER.md                           monotonic-threshold design space (Sketch B = binner_prio)
+DESIGN_NOTES.md                          candidate designs we discussed but didn't build
+dslx/binner.x                            parametric DSLX function (fold + prio variants) + tests
+dslx/binner_top_8x4.x                    concrete top instantiation for §2 (BW=8, N=4)
+verif/binner_ref.py                      canonical Python reference (M4a)
+verif/test_binner.py                     parametric cocotb test (M4a)
+verif/runner.py                          cocotb runner CLI (M4a)
+flows/librelane/binner_8x4/config.json   librelane Classic flow config (§3 baseline)
 flows/extract_metrics.py                 PPA summary extractor (stdlib-only)
 flows/run_point.sh                       one design point, end to end (M6)
 flows/run_sweep.sh                       grid of points in parallel (M6)
+flows/run_verif.sh                       grid of cocotb verifications (M4a)
 flows/plot_pareto.py                     sweep aggregation + Pareto plots (M8)
 flows/ir_to_dot.py                       XLS IR -> Graphviz computation graph + fanout report
-environment.yml                          minimal conda env (matplotlib for plots, graphviz for ir_to_dot)
-results/ppa_sweep.csv                    aggregated PPA table (first frontier)
+environment.yml                          conda env (cocotb, iverilog, verilator, matplotlib, graphviz)
+results/ppa_sweep.csv                    aggregated PPA table (committed)
 ```
 
 Gitignored (regenerated by following this HOWTO):
@@ -479,5 +524,6 @@ runs/sky130/{comb,pipe_s4_2000ps,pipe_s4_500ps,pipe_s1_2000ps}/bw8_nb4/
 flows/librelane/binner_8x4/{binner.v,runs/}   hand-walked librelane input + artifacts (section 3)
 runs/<model>/<arch>/bw<BW>_nb<NB>/        scripted points: top.x, IR, Verilog, metrics.json, point.json
 runs/_sweeps/<timestamp>/                 run_sweep.sh dispatch logs + joblog
+runs/_verif/<timestamp>/                  run_verif.sh dispatch logs + per-point build dirs
 results/*.png                            Pareto plots (regenerate via plot_pareto.py)
 ```

@@ -98,9 +98,9 @@ Two structural facts about the flow worth knowing:
   `STAPostPNR` timing *and* power use real routed-wire RC, not estimates. This
   is the difference between layer 2 and layer 5.
 - **`Yosys.EQY` (step 74)** already performs RTL-vs-gate **logical equivalence**
-  inside the flow — relevant to M4: gate-level *functional* equivalence is
-  partly covered here; `lec_main` and cocotb add to it rather than being the
-  only option.
+  inside the flow — gate-level *functional* equivalence is partly covered here.
+  M4a (cocotb RTL functional sim, see `COCOTB.md`) and `lec_main` add to it
+  rather than being the only option.
 
 ---
 
@@ -144,19 +144,20 @@ driven from the clock, *not* measured switching. The split we report
 Leakage and internal power are fairly trustworthy; **switching power is only as
 good as the assumed activity**.
 
-**Refinement path (ties to M4, not yet built):**
+**Refinement path (M4b — not yet built; the RTL half M4a is done, see `COCOTB.md`):**
 
 1. Run a gate-level (or RTL) sim with **realistic stimulus** — cocotb driving
-   iverilog/verilator on the post-synth or post-route netlist (this is the M4
-   bench; `simulate_module_main` is not shipped, so cocotb is the route).
+   iverilog/verilator on the post-synth or post-route netlist (this extends the
+   M4a bench to the gate level; `simulate_module_main` is not shipped, so
+   cocotb is the route either way).
 2. Dump a **VCD** (or distill a **SAIF**) of per-net toggle activity.
 3. Feed it to OpenSTA: `read_vcd`/`read_power_activity` (or `set_power_activity`
    from SAIF) before `report_power`, so switching power uses *measured* rates.
 
 LibreLane 3.0.3 has **no built-in step** for this, so it would be a custom step
-or a standalone OpenSTA script we add — a deliberate extension, sequenced after
-the first frontier with M4. Until then, treat switching power as a vectorless
-estimate and compare points *relatively* (same assumed activity for all).
+or a standalone OpenSTA script — an optional extension layered on M4a. Until
+then, treat switching power as a vectorless estimate and compare points
+*relatively* (same assumed activity for all).
 
 ---
 
@@ -238,6 +239,6 @@ numbers, and renders area/critical-path/power scaling vs `bw_global` /
 `n_boundaries` plus area-vs-critpath and area-vs-power Pareto frontiers. A first
 16-point sky130 grid (`parallel × bw{4,8,12,16} × nb{2,4,8,16}`) is in hand.
 
-**Deferred refinements:** vector-based power via cocotb→SAIF→OpenSTA (§5, with
-M4); a librelane `CLOCK_PERIOD` sweep for true fastest-closing clock (§4);
-asap7 PnR (§7, Phase 2).
+**Optional next steps:** vector-based power via cocotb→SAIF→OpenSTA (§5,
+extends M4a/M4b); a librelane `CLOCK_PERIOD` sweep for true fastest-closing
+clock (§4); asap7 physical PnR via ORFS (§7).

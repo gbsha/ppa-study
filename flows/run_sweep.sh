@@ -25,6 +25,10 @@
 #                                                  (default: "parallel" — 1 stage;
 #                                                   pass e.g. "parallel pipe_s4" to add
 #                                                   pipelined points if a path is too long)
+#   --variants "LIST"    space-separated DSLX variants: ref prio
+#                                                  (default: "ref"; pass "ref prio" to
+#                                                   compare the fold reference against
+#                                                   the THERMOMETER Sketch B port)
 #   --bw-global "LIST"   space-separated bitwidths              (default: "4 8 12 16")
 #   --n-bounds "LIST"    space-separated bin counts             (default: "2 4 8 16")
 #   --delay-model NAME   sky130|asap7|unit                      (default: sky130)
@@ -44,6 +48,7 @@ RUN_POINT="$ROOT/flows/run_point.sh"
 # "parallel"), sweeping the build-time parameters bw_global x n_boundaries.
 # Multi-stage pipelining (pipe_sN) is a deliberate opt-in via --arch.
 ARCHS="parallel"
+VARIANTS="ref"
 BWS="4 8 12 16"
 NBS="2 4 8 16"
 DELAY_MODEL="sky130"
@@ -56,6 +61,7 @@ usage() { sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//; $d'
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --arch)           ARCHS="$2"; shift 2 ;;
+    --variants)       VARIANTS="$2"; shift 2 ;;
     --bw-global)      BWS="$2"; shift 2 ;;
     --n-bounds)       NBS="$2"; shift 2 ;;
     --delay-model)    DELAY_MODEL="$2"; shift 2 ;;
@@ -84,18 +90,20 @@ arch_flags() {
 declare -a TAGS POINT_ARGS
 for arch in $ARCHS; do
   af="$(arch_flags "$arch")"
-  for bw in $BWS; do
-    for nb in $NBS; do
-      common="--delay-model $DELAY_MODEL --bw-global $bw --n-bounds $nb $af --librelane-jobs $INNER"
-      [[ $SKIP_PNR -eq 1 ]] && common="$common --skip-pnr"
-      [[ $FORCE   -eq 1 ]] && common="$common --force"
-      TAGS+=("${arch}_bw${bw}_nb${nb}")
-      POINT_ARGS+=("$common")
+  for variant in $VARIANTS; do
+    for bw in $BWS; do
+      for nb in $NBS; do
+        common="--delay-model $DELAY_MODEL --bw-global $bw --n-bounds $nb $af --variant $variant --librelane-jobs $INNER"
+        [[ $SKIP_PNR -eq 1 ]] && common="$common --skip-pnr"
+        [[ $FORCE   -eq 1 ]] && common="$common --force"
+        TAGS+=("${arch}_${variant}_bw${bw}_nb${nb}")
+        POINT_ARGS+=("$common")
+      done
     done
   done
 done
 
-echo "Sweep: ${#TAGS[@]} points  | model=$DELAY_MODEL  archs=[$ARCHS]  bw=[$BWS]  nb=[$NBS]"
+echo "Sweep: ${#TAGS[@]} points  | model=$DELAY_MODEL  archs=[$ARCHS]  variants=[$VARIANTS]  bw=[$BWS]  nb=[$NBS]"
 echo "Concurrency: OUTER=$OUTER points × INNER=$INNER librelane threads  (nproc=$(nproc))"
 
 if [[ $DRY -eq 1 ]]; then

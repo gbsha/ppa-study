@@ -21,6 +21,9 @@
 #   --bw-global N        bitwidth of global_index / each threshold      (required)
 #   --n-bounds N         number of boundary entries (bins)              (required)
 #   --arch parallel|pipeline   architecture family            (default: parallel)
+#   --variant ref|prio   binner source variant                 (default: ref)
+#                        ref  = binner::binner (fold reference); prio = binner::binner_prio
+#                        (Sketch B from THERMOMETER.md, ctz(!cmps) priority encoder)
 #   --stages N           pipeline stages; forced to 1 for 'parallel'  (default: 4 for pipeline)
 #   --codegen-clock-ps N|auto  XLS scheduling clock; 'auto' probes the minimum
 #                        feasible clock for the stage count   (default: auto)
@@ -41,7 +44,7 @@ DSLX_DIR="$ROOT/dslx"
 XLS_TAG="xls-81ff4fdf7-xlsbin-1"   # pinned xls commit + xls-bin bundle build (provenance only)
 
 # ---- defaults ----------------------------------------------------------------
-BW=""; NB=""; ARCH="parallel"; STAGES=""; CODEGEN_CLK=""
+BW=""; NB=""; ARCH="parallel"; VARIANT="ref"; STAGES=""; CODEGEN_CLK=""
 LL_CLK_NS="10"; LL_JOBS=""; DELAY_MODEL="sky130"; SKIP_PNR=0; FORCE=0
 
 usage() { sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//; $d'; }
@@ -51,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --bw-global)         BW="$2"; shift 2 ;;
     --n-bounds)          NB="$2"; shift 2 ;;
     --arch)              ARCH="$2"; shift 2 ;;
+    --variant)           VARIANT="$2"; shift 2 ;;
     --stages)            STAGES="$2"; shift 2 ;;
     --codegen-clock-ps)  CODEGEN_CLK="$2"; shift 2 ;;
     --librelane-clock-ns) LL_CLK_NS="$2"; shift 2 ;;
@@ -74,6 +78,15 @@ case "$ARCH" in
   *) die "--arch must be 'parallel' or 'pipeline' (got '$ARCH')" ;;
 esac
 
+# ---- resolve variant -> DSLX function call and directory tag -----------------
+# 'ref' keeps the historical layout (no suffix); other variants get suffixed so
+# their runs don't collide with the already-committed reference grid.
+case "$VARIANT" in
+  ref)  BINNER_FN="binner::binner" ;;
+  prio) BINNER_FN="binner::binner_prio"; ARCH_TAG="${ARCH_TAG}_${VARIANT}" ;;
+  *) die "--variant must be 'ref' or 'prio' (got '$VARIANT')" ;;
+esac
+
 POINT_DIR="$ROOT/runs/$DELAY_MODEL/$ARCH_TAG/bw${BW}_nb${NB}"
 IR="$POINT_DIR/binner.ir"; OPT_IR="$POINT_DIR/binner.opt.ir"
 VERILOG="$POINT_DIR/binner.v"; CONFIG="$POINT_DIR/config.json"
@@ -85,7 +98,7 @@ if [[ -f "$SENTINEL" && $FORCE -eq 0 ]]; then
 fi
 mkdir -p "$POINT_DIR"
 
-echo "[point] model=$DELAY_MODEL arch=$ARCH_TAG bw=$BW nb=$NB -> $POINT_DIR"
+echo "[point] model=$DELAY_MODEL arch=$ARCH_TAG variant=$VARIANT bw=$BW nb=$NB -> $POINT_DIR"
 
 # ---- 1. generate the concrete DSLX top --------------------------------------
 # === FUNCTION-SPECIFIC (binner) — to adapt to another design replace this block
@@ -106,7 +119,7 @@ pub fn binner_top(
     global_index: uN[BW_GLOBAL],
     lower_bin_boundaries: uN[BW_GLOBAL][N_BOUNDS],
 ) -> (uN[BW_BIN], uN[BW_GLOBAL]) {
-    binner::binner<BW_GLOBAL, N_BOUNDS>(global_index, lower_bin_boundaries)
+    ${BINNER_FN}<BW_GLOBAL, N_BOUNDS>(global_index, lower_bin_boundaries)
 }
 EOF
 # === end function-specific ===
@@ -151,6 +164,7 @@ cat > "$POINT_DIR/point.json" <<EOF
 {
   "delay_model": "$DELAY_MODEL",
   "arch": "$ARCH", "arch_tag": "$ARCH_TAG", "pipeline_stages": $STAGES,
+  "variant": "$VARIANT",
   "bw_global": $BW, "n_bounds": $NB,
   "codegen_clock_ps": $CODEGEN_CLK,
   "librelane_clock_ns": $LL_CLK_NS,

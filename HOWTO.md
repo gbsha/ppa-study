@@ -249,6 +249,25 @@ Two reads:
 
 Together these motivate the popcount rewrite tracked in `THERMOMETER.md`: the segment that dominates the budget at large `n_boundaries` is exactly the one whose structure ignores the monotonicity contract.
 
+**Post-PnR comparison of the `prio` rewrite (THERMOMETER Sketch B).** `dslx/binner.x` ships two variants now — `binner` (the fold reference) and `binner_prio` (the `ctz(!cmps)` priority encoder that exploits the monotonicity contract). Select with `flows/run_point.sh --variant {ref,prio}`; the prio runs land under `runs/sky130/parallel_prio/...` so they don't clobber the reference grid. The XLS opt pass collapses `ctz(!cmps)` into two canonical IR ops with log-depth delay models: `one_hot(c, lsb_prio=true)` followed by `encode(...)`. Running librelane Classic at a 10 ns clock on both points gives:
+
+| metric                    | bw8_nb4 ref | bw8_nb4 prio | bw16_nb16 ref | bw16_nb16 prio |
+| ------------------------- | ----------- | ------------ | ------------- | -------------- |
+| XLS pre-PnR crit path     |  1809 ps    |   1510 ps    |  4986 ps      |  **2219 ps**   |
+| post-PnR path (nom_tt)    |   4.71 ns   |   5.32 ns ⚠   |   9.02 ns     |  **7.98 ns**   |
+| nom_ss setup ws           |  +0.77 ns   |  -0.39 ns ⚠   |  -6.96 ns     |  **-5.14 ns**  |
+| core area (µm²)           |  5010       |   5107       | 32454         | 32619          |
+| total power (mW, vectorless) | 0.82    |   0.77       | **16.27**     |  **3.54**      |
+| max-slew viols (max_ss)   |   11        |    11        |   121         |   239 ⚠         |
+
+Three reads:
+
+- **At scale the rewrite delivers, in line with the XLS estimate.** `bw16_nb16` post-PnR critical path drops 9.02 → 7.98 ns (-11.6 %), the ss-corner failure halves, and vectorless power falls ~4.6×. The power swing follows from depth: activity propagation through the fold's 7-deep mux chain feeds many more switching events into the estimator than the prio variant's 2–3-level `one_hot + encode` tree.
+- **At small scale the rewrite *regresses*.** `bw8_nb4` post-PnR path goes 4.71 → 5.32 ns (+13 %), and ss flips from +0.77 ns slack (passes!) to -0.39 ns (fails by 0.4 ns). The XLS estimate had prio faster (1510 < 1809 ps), but Yosys/ABC techmap a 4-bit `one_hot` priority encoder less efficiently than the fold's three 2-input muxes — there is a crossover in `n_boundaries` between 4 and 16 below which the fold is the right shape. Locating that crossover is what the next sweep is for.
+- **Max-slew viols at scale are slightly worse with prio.** The `one_hot` mapping introduces some high-fanout broadcast nets the resizer doesn't fully tame at the ss corner (9 viols at nom_tt that prio didn't have either, 239 vs 121 at max_ss). Still doesn't break tt setup, but it's the new structural cost.
+
+The XLS rewrite is in `dslx/binner.x:binner_prio` with mirrored deterministic tests; `prove_quickcheck_main` symbolically proves `binner_prio == binner` over all 256 (u8) and 65 536 (u16) `global_index` values for fixed monotonic bound arrays.
+
 ## 3 — M3: one Verilog through librelane sky130 PnR
 
 M2 generated Verilog optimised for *inspection*. None of those three variants drops directly into librelane Classic flow:

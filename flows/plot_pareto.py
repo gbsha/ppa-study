@@ -57,7 +57,8 @@ WS_R2R = {
 SLEW_VIOL_SS = f"design__max_slew_violation__count__corner:{CORNER_SS}"
 
 COLUMNS = [
-    "delay_model", "arch_tag", "arch", "pipeline_stages", "bw_global", "n_bounds",
+    "delay_model", "arch_tag", "arch", "variant", "pipeline_stages",
+    "bw_global", "n_bounds",
     "codegen_clock_ps", "xls_crit_path_ns", "flop_count",
     "core_area_um2", "die_area_um2", "stdcell_util", "power_mw",
     "pnr_crit_path_tt_ns", "pnr_crit_path_ss_ns", "max_slew_viol_ss",
@@ -79,6 +80,8 @@ def load_record(point_dir):
         "delay_model":      p.get("delay_model"),
         "arch_tag":         p.get("arch_tag"),
         "arch":             p.get("arch"),
+        # variant defaults to 'ref' so legacy point.json (pre-variant) loads cleanly.
+        "variant":          p.get("variant", "ref"),
         "pipeline_stages":  p.get("pipeline_stages"),
         "bw_global":        p.get("bw_global"),
         "n_bounds":         p.get("n_bounds"),
